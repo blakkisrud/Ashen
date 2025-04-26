@@ -26,14 +26,9 @@ This is still under development and contributions are welcome, please make a pul
 
 Clone the repository and install the required dependencies:
 ```bash
-git clone https://github.com/blakkisrud/ashen.git
-cd ashen
+pip install git+https://github.com/blakkisrud/ashen.git@v0.1.1
 ```
 
-To install the ashen command line tool, run the following command in the root directory of the project:
-```bash
-pip install -e .
-```
 ## Usage
 
 - A simple example script is provided in the demo.py file to demonstrate how to use the functions in Ashen.
@@ -87,4 +82,9 @@ Future versions will include:
 This work make use of the ICRP Publication 107 data. Please refer to the ICRP website for more information on the license and usage of the data.
 
 Ashen is licensed under the MIT License. See the LICENSE file for more information.
+
+## Version History
+
+- 0.1.0 - Initial release with basic functionality and command line tool.
+- 0.1.1 - Fix some small typoes
 
