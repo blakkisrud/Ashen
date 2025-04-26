@@ -1,5 +1,7 @@
 # Ashen
 
+ <p align="center"> <img src="resources/logo.png" alt="Ashen Logo" width="200"/> </p> 
+
 Ashen is a Python resource designed to extract and work with information from ICRP Publication 107, a comprehensive collection of physical properties of radionuclides. It provides simple access to radionuclide data for use in research, clinical applications, or educational purposes.
 
 This was mostly made as a pet project in accociation with absorbed dose calculation for radionuclide therapy. The goal is to provide a simple interface to access the data in ICRP 107, and to make it easy to use in Python.
@@ -37,4 +39,8 @@ Future versions will include:
 -     A command-line tool for quick access to data.
 
 -     A lightweight graphical interface for browsing radionuclide properties.
+
+## License
+
+This work make use of the ICRP Publication 107 data, which is available under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License. Please refer to the ICRP website for more information on the license and usage of the data.
 
