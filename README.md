@@ -26,9 +26,8 @@ This is still under development and contributions are welcome, please make a pul
 
 Clone the repository and install the required dependencies:
 ```bash
-git clone https://github.com/yourusername/ashen.git
+git clone https://github.com/blakkisrud/ashen.git
 cd ashen
-pip install -r requirements.txt
 ```
 
 To install the ashen command line tool, run the following command in the root directory of the project:
