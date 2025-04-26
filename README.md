@@ -16,9 +16,9 @@ This is still under development and contributions are welcome, please make a pul
 
 - Demonstration script to get started
 
-- Planned support for:
+- Simple command-line tool for quick access to data
 
-    - Command-line interface (CLI)
+- Planned support for:
 
     - Simple graphical user interface (GUI)
 
@@ -30,13 +30,56 @@ git clone https://github.com/yourusername/ashen.git
 cd ashen
 pip install -r requirements.txt
 ```
+
+To install the ashen command line tool, run the following command in the root directory of the project:
+```bash
+pip install -e .
+```
 ## Usage
 
 - A simple example script is provided in the demo.py file to demonstrate how to use the functions in Ashen.
 
-Future versions will include:
+### Command line tool
+You can also use the command line tool to access the data. The command line tool is called `ashen` and can be run from the terminal. The basic usage is as follows:
 
--     A command-line tool for quick access to data.
+```bash
+ashen [options] <radionuclide_name>
+```
+
+Where `<radionuclide_name>` is the name of the radionuclide you want to access. For example, to get the half life of I-131, you can run:
+
+```bash
+ashen get-half-life I-131
+```
+
+This will return the half life of I-131.
+
+To get the summed energy emitted by I-131, you can run:
+
+```bash
+ashen energy I-131
+```
+
+Where you can specify the type of energy you want to get. The available options are:
+- `--(b)eta`: Get the beta energy emitted by the radionuclide.
+- `--(a)lpha`: Get the alpha energy emitted by the radionuclide.
+- `--(n)on-penetrative`: Non penetrative energy emitted by the radionuclide.
+
+like this:
+
+```bash
+ashen energy I-131 --b
+```
+
+All energy values are in MeV.
+
+You can also use the `--help` option to see a list of available options and commands:
+
+```bash
+ashen --help
+```
+
+Future versions will include:
 
 -     A lightweight graphical interface for browsing radionuclide properties.
 
