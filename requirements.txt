@@ -1,0 +1,13 @@
+# Core dependencies
+pandas
+numpy
+click
+
+# (Future) Graphical User Interface dependencies
+# pyqt5
+# or
+# tkinter (standard library, no need to install)
+
+# (Optional) Developer tools
+# pytest  # for testing
+# black   # for code formatting

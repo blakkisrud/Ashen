@@ -5,13 +5,16 @@ be on developer versions
 
 """
 
-from ashen_utils import (
+from ashen.ashen_utils import (
     make_decay_chain_db,
     load_icrp_107,
     energy_in_decay_chain,
+
 )
 
 from typing import Dict
+
+# Test the functions from ashen_utils
 
 # Load decay chains and emission data
 emission_energy: Dict[str, float] = load_icrp_107()

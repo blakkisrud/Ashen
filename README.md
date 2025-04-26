@@ -42,5 +42,7 @@ Future versions will include:
 
 ## License
 
-This work make use of the ICRP Publication 107 data, which is available under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International License. Please refer to the ICRP website for more information on the license and usage of the data.
+This work make use of the ICRP Publication 107 data. Please refer to the ICRP website for more information on the license and usage of the data.
+
+Ashen is licensed under the MIT License. See the LICENSE file for more information.
 
