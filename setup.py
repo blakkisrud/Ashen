@@ -12,4 +12,7 @@ setup(
             "ashen=ashen.cli:cli",
         ],
     },
+    package_data={
+        "ashen_utils": ["resources/*.TXT", "resources/*.RAD"],
+    }
 )

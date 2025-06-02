@@ -23,8 +23,13 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
-ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
+from importlib.resources import files
+
+#DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
+#ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
+
+DECAY_CHAINS_PATH = files("ashen.resources") / "DECAY_CHAINS.TXT"
+ICRP_107_PATH = files("ashen.resources") / "FULL_RAD_LIST.RAD"
 
 @dataclass
 class RadiationEmission:
@@ -43,12 +48,14 @@ class Nuclide:
         default_factory=list)  # (Daughter name, branching fraction)
     emissions: List[RadiationEmission] = field(default_factory=list)
 
-    def calculate_alpha_energy(self) -> float:
+    def calculate_alpha_energy(self, rbe_alpha = 1.0) -> float:
         """Calculate the total alpha energy for the decay of this radionuclide."""
         total_alpha_energy = 0.0
         for emission in self.emissions:
             if emission.radiation_type == "A":
                 total_alpha_energy += emission.energy * emission.yield_fraction
+        # Apply RBE factor for alpha particles
+        total_alpha_energy *= rbe_alpha
         return total_alpha_energy
 
     def calculate_beta_energy(self) -> float:
@@ -92,9 +99,9 @@ class Nuclide:
                     total_low_energy_photons += emission.energy * emission.yield_fraction
         return total_low_energy_photons
 
-    def calculate_total_non_penetrative_energy(self, cut_off=1e-3) -> float:
+    def calculate_total_non_penetrative_energy(self, cut_off=1e-3, rbe_alpha = 1.0) -> float:
         """Calculate the total non-penetrative energy for the decay of this radionuclide."""
-        return (self.calculate_alpha_energy() + self.calculate_ic_electrons() +
+        return (self.calculate_alpha_energy(rbe_alpha=rbe_alpha) + self.calculate_ic_electrons() +
                 self.calculate_auger_electrons() + self.calculate_low_energy_photons(cut_off) + self.calculate_beta_energy())
     
     def calculate_decay_constant(self) -> float:
@@ -128,6 +135,10 @@ class DecayDatabase:
         for daughter, fraction in nuclide.daughters:
             print(f"{indent}  ├── {daughter} (Branching: {fraction:.3e})")
             self.display_decay_chain(daughter, level + 1)
+
+    def get_all_nuclide_names(self):
+        """Returns a list of all nuclide names in the database."""
+        return list(self.nuclides.keys())
 
 
 def convert_to_hours(num, unit):
@@ -333,7 +344,7 @@ def make_decay_chain_db(path=DECAY_CHAINS_PATH, emission_data=None, add_single_n
 
     return db
 
-def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
+def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0, rbe_alpha = 1.0):
 
     total_alpha_energy = 0
     total_beta_energy = 0
@@ -346,11 +357,11 @@ def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
                 "Total Non-Penetrative Energy": 0}
 
     total_alpha_energy += db.get_decay_info(
-        nuc_name).calculate_alpha_energy() * parent_fraction
+        nuc_name).calculate_alpha_energy(rbe_alpha = rbe_alpha) * parent_fraction
     total_beta_energy += db.get_decay_info(
         nuc_name).calculate_beta_energy() * parent_fraction
     total_non_penetrative_energy += db.get_decay_info(
-        nuc_name).calculate_total_non_penetrative_energy() * parent_fraction
+        nuc_name).calculate_total_non_penetrative_energy(rbe_alpha = rbe_alpha) * parent_fraction
 
     decays = (get_daughters(db, nuc_name, parent_fraction=parent_fraction))
 
@@ -359,11 +370,11 @@ def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
             continue
 
         total_alpha_energy += db.get_decay_info(
-            daughter_name).calculate_alpha_energy() * fraction
+            daughter_name).calculate_alpha_energy(rbe_alpha = rbe_alpha) * fraction
         total_beta_energy += db.get_decay_info(
             daughter_name).calculate_beta_energy() * fraction
         total_non_penetrative_energy += db.get_decay_info(
-            daughter_name).calculate_total_non_penetrative_energy() * fraction
+            daughter_name).calculate_total_non_penetrative_energy(rbe_alpha = rbe_alpha) * fraction
 
     energy_dict = {"Total Alpha Energy": total_alpha_energy,
                    "Total Beta Energy": total_beta_energy,
@@ -419,5 +430,10 @@ def load_icrp_107(path=ICRP_107_PATH):
     return energy_data
 
 if __name__ == "__main__":
+
+    print("Making a dummy decay chain database for testing purposes")
+
+    emission_data = load_icrp_107()
+    db = make_decay_chain_db(emission_data=emission_data)
 
     print("Have a nice day")
