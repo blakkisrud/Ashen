@@ -23,7 +23,10 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from importlib.resources import files
+try:
+    from importlib.resources import files  # Python 3.9+
+except ImportError:
+    from importlib_resources import files  # Backport for <3.9
 
 #DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
 #ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
