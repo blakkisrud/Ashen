@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="ashen",
-    version="0.1.2",
+    version="0.1.5",
     packages=find_packages(),
     install_requires=[
         "click",
@@ -13,6 +13,6 @@ setup(
         ],
     },
     package_data={
-        "ashen_utils": ["resources/*.TXT", "resources/*.RAD"],
+        "ashen": ["resources/*.TXT", "resources/*.RAD"],
     }
 )
