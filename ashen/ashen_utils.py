@@ -1,15 +1,7 @@
 """
 
-Main source file for shared functions
-
-"""
-
-"""
-
-Support functions to retreive the half life from a file from ICRP 107
-
-Script can also contain the loading of different radinuclide data and 
-characteristics
+Main source file for shared functions that are used 
+across in the package
 
 """
 
@@ -31,9 +23,54 @@ except ImportError:
 #DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
 #ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
 
+def mono_exp(t, A0, lam_bio, lam_phys):
+    """
+    Mono-exponential decay function.
+    
+    Args:
+        t (float): Time in hours.
+        A0 (float): Initial activity in MBq.
+        lam_bio (float): Biological decay constant in 1/h.
+        lam_phys (float): Physical decay constant in 1/h.
+    
+    Returns:
+        float: Activity at time t in MBq.
+    """
+    return A0 * np.exp(-(lam_bio + lam_phys) * t)
+
+def f_2p(t, A0, lam_phys, lam_bio = None, lam_bc = np.log(2)/(1/60), use_effective_half_life=False, lam_eff = None, only_phys = False):
+
+    """
+
+    Function to calculate the activity of a radionuclide at time t, considering biological and physical decay.
+
+    Args:
+        t (float): Time in hours.
+        A0 (float): Initial activity in MBq.
+        lam_phys (float): Physical decay constant in 1/h.
+        lam_bio (float, optional): Biological decay constant in 1/h. Defaults to None.
+        lam_bc (float, optional): Biological decay constant for background in 1/h. Defaults to np.log(2)/(1/60).
+        use_effective_half_life (bool, optional): If True, uses effective half-life for biological decay. Defaults to False.
+        lam_eff (float, optional): Effective decay constant in 1/h. Required if use_effective_half_life is True.
+    """
+
+    if only_phys:
+        # If only physical decay is considered, return the mono-exponential decay
+        return A0 * np.exp(-lam_phys * t)
+
+    if use_effective_half_life:
+        # If using effective half-life, we need to adjust the biological decay constant
+        return A0*np.exp(-(lam_eff)*t) - A0*np.exp(-(lam_phys + lam_bc)*t)
+    return A0*np.exp(-(lam_bio + lam_phys)*t) - A0*np.exp(-(lam_phys + lam_bc)*t)
+
+
 DECAY_CHAINS_PATH = files("ashen.resources") / "DECAY_CHAINS.TXT"
 ICRP_107_PATH = files("ashen.resources") / "FULL_RAD_LIST.RAD"
 
+"""
+Define a dataclass for radiation emissions
+This dataclass will hold the energy, yield fraction, and type of radiation emitted during the decay process.
+"""
 @dataclass
 class RadiationEmission:
     energy: float  # in MeV
@@ -42,6 +79,10 @@ class RadiationEmission:
 
 # Define a dataclass for the radionuclide data
 
+"""
+This dataclass will hold the name, half-life, daughters, and emissions of a radionuclide.
+It will also include methods to calculate various energies associated with the decay process.
+"""
 @dataclass
 class Nuclide:
     name: str
@@ -265,6 +306,11 @@ def get_daughters(db: DecayDatabase, nuclide_name: str, parent_fraction=1.0, dau
     return daughters
 
 def half_life_from_icrp107(path=ICRP_107_PATH):
+    """
+    Get the half lives from ICRP 107
+    This function is deprecated, but kept for backwards compatibility.
+    It reads the ICRP 107 file and extracts the half-life data for each nuclide.
+    """
 
     halflife_data = {}
 
@@ -348,6 +394,10 @@ def make_decay_chain_db(path=DECAY_CHAINS_PATH, emission_data=None, add_single_n
     return db
 
 def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0, rbe_alpha = 1.0):
+
+    """
+    Calculate the total energy released in the decay chain of a given nuclide.
+    """
 
     total_alpha_energy = 0
     total_beta_energy = 0

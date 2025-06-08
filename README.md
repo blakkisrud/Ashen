@@ -1,6 +1,6 @@
 # Ashen
 
- <p align="center"> <img src="resources/logo.png" alt="Ashen Logo" width="200"/> </p> 
+ <p align="center"> <img src="ashen/resources/logo.png" alt="Ashen Logo" width="200"/> </p> 
 
 Ashen is a Python resource designed to extract and work with information from ICRP Publication 107, a comprehensive collection of physical properties of radionuclides. It provides simple access to radionuclide data for use in research, clinical applications, or educational purposes.
 
