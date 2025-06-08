@@ -20,9 +20,11 @@ This is still under development and contributions are welcome, please make a pul
 
 - Simple command-line tool for quick access to data
 
+- The GUI named  `sanity`, which is a simple graphical user interface for calculating the absorbed dose from radionuclide therapy - this is on the main branch and not yet released.
+
 - Planned support for:
 
-    - Simple graphical user interface (GUI)
+    - Simple general graphical user interface (GUI)
 
 ## Installation
 
@@ -30,6 +32,8 @@ Clone the repository and install the required dependencies:
 ```bash
 pip install git+https://github.com/blakkisrud/ashen.git@v0.1.2
 ```
+
+This is the current "stable" version of Ashen. There is also a development version available, which can be installed by replacing `v0.1.2` with `main` in the above command.
 
 ## Usage
 
