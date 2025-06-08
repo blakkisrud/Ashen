@@ -10,6 +10,15 @@ This is still under development and contributions are welcome, please make a pul
 
 ![Static Badge](https://img.shields.io/badge/ashen-v0.0.2-blue)
 
+## Important caveats
+
+- Use at your own risk. This is a work in progress and may contain bugs or inaccuracies.
+
+- The data is based on ICRP Publication 107, which is a comprehensive collection of physical properties of radionuclides. However, the data may not be complete or up-to-date, and should not be used for clinical decision making without further validation.
+
+- This is not tested for neutrons or other particles, only for photons, mono-energetic electrons, beta and alpha particles.
+
+
 ## Features
 
 - Access radionuclide physical properties from ICRP 107
