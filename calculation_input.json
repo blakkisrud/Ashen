@@ -1,0 +1,73 @@
+{
+    "alpha_RBE_value": null,
+    "radionuclide": "Lu-177",
+    "source_tissue": "RM",
+    "fields": [
+        {
+            "name": "cranifacial_bones",
+            "MBqhrs_per_ml": "1",
+            "CF": "38"
+        },
+        {
+            "name": "mandible",
+            "MBqhrs_per_ml": "1",
+            "CF": "38"
+        },
+        {
+            "name": "scapulae",
+            "MBqhrs_per_ml": "1",
+            "CF": "38"
+        },
+        {
+            "name": "clavicles",
+            "MBqhrs_per_ml": "1",
+            "CF": "33"
+        },
+        {
+            "name": "sternum",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "ribs",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "cervical_vertebrae",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "thoracic_vertebrae",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "lumbar_vertebrae",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "sacrum",
+            "MBqhrs_per_ml": "1",
+            "CF": "70"
+        },
+        {
+            "name": "os_coxae",
+            "MBqhrs_per_ml": "1",
+            "CF": "48"
+        },
+        {
+            "name": "proximal_humeri",
+            "MBqhrs_per_ml": "1",
+            "CF": "25"
+        },
+        {
+            "name": "proximal_femora",
+            "MBqhrs_per_ml": "1",
+            "CF": "25"
+        }
+    ],
+    "daughters": {}
+}
