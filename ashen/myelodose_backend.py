@@ -16,19 +16,29 @@ import sys
 import seaborn as sns
 import json
 import pickle as pkl
+
 from ashen.ashen_utils import (
     make_decay_chain_db,
     load_icrp_107)
 
-REMAKE_DB = False
+from beta_spectrum_analysis import (
+    replace_simple_beta_with_full_spectrum
+)
+
+REMAKE_DB = True
+SILENCE_WARNING = True
 
 #--- Skeletal site data - electrons ------------
 
 with open("combined_saf.yaml", "r") as f:
     SKELETAL_SITE_DATA_ELECTRONS = yaml.safe_load(f)
 
-sites = list(SKELETAL_SITE_DATA_ELECTRONS.keys())
-#sites = ["lumbar_vertebrae", "mandible", "proximal_humeri"]
+# --- Skeletal site data - alphas ------------
+
+with open("combined_alpha_saf.yaml", "r") as f:
+    SKELETAL_SITE_DATA_ALPHAS = yaml.safe_load(f)
+
+#sites = list(SKELETAL_SITE_DATA_ELECTRONS.keys())
 
 if REMAKE_DB:
     emission_energy = load_icrp_107()
@@ -48,8 +58,6 @@ source_tissue_dict = {
     "RM": "red_marrow",
     "TBS": "tbs"
 } # TODO: Should be rewritten to match other parts of the code
-
-
 
 def retrieve_reference_mass_target(path_to_data = "resources\site_volumes.xlsx"):
 
@@ -87,7 +95,6 @@ def mass_data_sites(path_to_data = "resources\site_volumes.xlsx"):
 
     return mass_data
 
-
 def get_saf_data_electrons(site: str, 
                            source_tissue: str,
                            CF: str,
@@ -124,6 +131,37 @@ def get_saf_data_electrons(site: str,
 
     return saf_data
 
+def get_af_data_alphas(site: str,
+                          source_tissue: str,
+                          CF: str,
+                          skeletal_data = SKELETAL_SITE_DATA_ALPHAS):
+    
+    """
+    
+    Return the relevant SAF data for a given:
+    
+    - site
+    - CF
+    - Source tissue
+    
+    :param site: Name of the skeletal site
+    :param source_tissue: Name of the source tissue
+    :param CF: Cellularity factor
+    :param skeletal_data: The full skeletal data dictionary
+    
+    :return: SAF data in terms of specific absorbed fractions
+    """
+
+    # Check if CF is in the correct format
+    # 
+    if CF not in ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"]:
+    
+        raise ValueError("CF must be between 10 and 100 in increments of 10")
+    
+    af_data = skeletal_data[site]["alphas"][source_tissue][CF]
+    
+    return af_data
+
 def interpolate_phi(energy: float, 
                     saf_data: dict,
                     interpolation_technique: str) -> float:
@@ -141,7 +179,7 @@ def interpolate_phi(energy: float,
     E = np.array(list(E))
     Phi = np.array(list(Phi))
 
-    if energy < E.min() or energy > E.max():
+    if (energy < E.min() or energy > E.max()) and not SILENCE_WARNING:
         print("Warning: Energy is outside the range of the SAF data provided.")
     
     if interpolation_technique == "closest":
@@ -164,90 +202,6 @@ def interpolate_phi(energy: float,
         raise ValueError("Interpolation technique not recognized.")
 
     return None
-
-def plot_skeletal_site_data_electrons(sites):
-
-    fig = plt.figure()
-
-    dir_to_plots = "RM_manuscript"
-
-    for site in sites:
-
-        electron_safs = SKELETAL_SITE_DATA_ELECTRONS[site]["electrons"]["red_marrow"]["icrp"]
-
-        icrp_mass = ircrp_masses[site]
-
-        e = electron_safs.keys()
-        saf_values = electron_safs.values()
-
-        saf_array = np.array(list(saf_values)) * icrp_mass
-
-        plt.plot(e, saf_array, marker='o', label=f"{site} - electrons")
-
-    plt.xscale('log')
-    #plt.yscale('log')
-    plt.xlabel("Electron Energy (MeV)")
-
-    plt.legend()
-
-    plt.savefig(f"{dir_to_plots}/skeletal_site_safs_electrons.png", dpi=300)
-
-def test_energy_inpolation(saf_data = SKELETAL_SITE_DATA_ELECTRONS):
-
-    sites = list(saf_data.keys())
-
-    dir_to_plots = "RM_manuscript"
-
-    cols = sns.color_palette("husl", len(sites))
-
-    E_to_test = np.linspace(0.001, 10, 1000)
-
-    for interp_technique in ["spline", "linear", "loglog"]:
-
-        print(f"Testing interpolation technique: {interp_technique}")
-
-        interpolations = {}
-
-        for site in sites:
-            saf_values = saf_data[site]["electrons"]["red_marrow"]["icrp"]
-            interpolated_values = []
-            for E in E_to_test:
-                phi = interpolate_phi(energy=E,
-                                      saf_data=saf_values,
-                                      interpolation_technique="spline")
-                interpolated_values.append(phi)
-
-            interpolated_values = np.array(interpolated_values)
-            interpolated_values = interpolated_values * ircrp_masses[site]
-
-            interpolations[site] = interpolated_values
-
-        fig = plt.figure()
-        fig.suptitle(f"Interpolation technique: {interp_technique}")
-        for site in sites:
-            plt.plot(E_to_test, interpolations[site], label=site, color=cols[sites.index(site)])
-            saf_values = saf_data[site]["electrons"]["red_marrow"]["icrp"]
-            e = np.array(list(saf_values.keys()))
-            saf_vals = np.array(list(saf_values.values())) * ircrp_masses[site]
-            plt.scatter(e, saf_vals, color=cols[sites.index(site)], marker='o', s=75)
-
-        plt.xscale('log')
-
-        plt.xlabel("Electron Energy (MeV)")
-        plt.ylabel("Interpolated phi value")
-        plt.legend()
-
-        plt.savefig(f"{dir_to_plots}/interpolation_{interp_technique}.png", dpi=300)
-
-
-    plt.show()
-
-
-
-
-    print(sites)
-
-    return 0
 
 def saf_from_emission_data(emission_data, 
                            site: str,
@@ -286,8 +240,9 @@ sites = calculation_input.get("fields", [])
 
 source_tissue = calculation_input.get("source_tissue", None)
 
-
 def correct_cumulative_activity(sites, source_tissue):
+
+    errors = []
 
     mass_data = mass_data_sites()
 
@@ -297,19 +252,24 @@ def correct_cumulative_activity(sites, source_tissue):
         cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
         print(f"Cumulative activity concentration: {cumulative_activity_conc} MBq·hrs/ml")
         print(f"Cellularity factor: {site.get('CF', 'N/A')}")
-        spongiosa_volume = mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", 0)
-        print(spongiosa_volume)
+
+        spongiosa_volume = mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None)
+
+        if spongiosa_volume is None:
+            print(f"Error: Spongiosa volume data not found for site {site.get('name', '')}. Cannot correct cumulative activity.")
+            errors.append(f"Spongiosa volume data not found for site {site.get('name', '')}.")
+            continue
 
         # Make a correction if source tissue is RM
 
         if source_tissue == "RM":
             print("Making correction for red marrow source tissue.")
-            tbv_fraction = mass_data.get(site.get("name", ""), {}).get("tbv_fraction", 0)
+            tbv_fraction = mass_data.get(site.get("name", ""), {}).get("tbv_fraction", None)
             marrow_fraction = (1 - tbv_fraction)*cf_value
             marrow_mass = marrow_fraction*1.03 # Hacky - must place this value someplace else
             corrected_cumulative_activity = cumulative_activity_conc/marrow_mass
             print(f"Corrected cumulative activity concentration: {corrected_cumulative_activity} MBq·hrs/ml")
-            total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0)
+            total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", None)
             total_cumulative_activity = corrected_cumulative_activity * total_marrow_mass
 
             print(f"Total cumulative activity in site: {total_cumulative_activity} MBq·hrs")
@@ -318,7 +278,7 @@ def correct_cumulative_activity(sites, source_tissue):
                 print("Using total bone source tissue - no correction applied.")
 
                 # Total trabecular bone source tissue
-                total_cumulative_activity = cumulative_activity_conc*mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", 0) 
+                total_cumulative_activity = cumulative_activity_conc*mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None) 
 
                 #total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0)
 
@@ -326,7 +286,7 @@ def correct_cumulative_activity(sites, source_tissue):
 
         site['total_corrected_cumulative_activity_MBqhrs'] = total_cumulative_activity
 
-        return sites
+    return sites
 
 # Have the elements to perform the electron calculation now
 
@@ -334,49 +294,136 @@ corr_sites = correct_cumulative_activity(sites, source_tissue)
 
 nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
 
+if nuclide.is_beta_emitter:
+
+    nuclide = replace_simple_beta_with_full_spectrum(nuclide)
+
 print("Corrected sites data:")
 print(corr_sites)
 
 mass_data = mass_data_sites()
 
-for site in corr_sites:
+def calculate_absorbed_dose_electron(corr_sites, 
+                           source_tissue: str,
+                           nuclide,
+                           calculation_input,
+                           mass_data):
 
-    energy_emitted_in_site = 0
-    energy_absorbed_in_site = 0
+    for site in corr_sites:
 
-    # TODO: Have to add tissue information here
+        energy_emitted_in_site = 0
+        energy_absorbed_in_site = 0
 
-    if source_tissue == "RM":
+        # TODO: Have to add tissue information here
+
+        if source_tissue == "RM":
+
+            total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+            total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
+
+        elif source_tissue == "TBS":
+
+            total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+            icrp_cf = mass_data.get(site.get("name", ""), {}).get("ICRP_CF", None)
+            total_red_marrow_mass = total_marrow_mass * icrp_cf
+
+        electron_saf_data = get_saf_data_electrons(site=site.get("name", ""),
+                                                    source_tissue=source_tissue_dict[source_tissue],
+                                                    CF=site.get("CF", None))
+
+        for em in nuclide.emissions:
+            if em.radiation_type not in ["B-", "IE", "AE"]:
+                continue
+            energy = em.energy
+            Phi = interpolate_phi(energy=energy,
+                                  saf_data=electron_saf_data,
+                                  interpolation_technique=calculation_input.get("interpolation_technique", "linear"))
+            #print(f"Energy: {energy} MeV - Phi: {Phi} for site {site.get('name', '')}")
+
+            energy_absorbed_in_site += energy * Phi * em.yield_fraction*total_red_marrow_mass
+            energy_emitted_in_site += energy * em.yield_fraction
+
+        total_energy_absorbed_in_MeV = energy_absorbed_in_site * site.get('total_corrected_cumulative_activity_MBqhrs', 0) * 3600*1e6 
+        total_energy_absorbed_in_J = total_energy_absorbed_in_MeV * 1.60218e-13 # TODO: Magic number - place elsewhere
+
+        absorbed_dose_Gy = total_energy_absorbed_in_J / (total_red_marrow_mass * 1e-3)  # mass in kg
+
+        site["absorbed_dose_Gy_electrons"] = absorbed_dose_Gy
+        site["fraction_energy_absorbed_electrons"] = energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0
+
+    return corr_sites
+
+def calculate_absorbed_dose_alpha(corr_sites,
+                                  source_tissue: str,
+                                  nuclide,
+                                  calculation_input,
+                                  mass_data):
+    
+    for site in corr_sites:
+
+        energy_emitted_in_site = 0
+        energy_absorbed_in_site = 0
+
+        alpha_af_data = get_af_data_alphas(site=site.get("name", ""),
+                                             source_tissue=source_tissue_dict[source_tissue],
+                                             CF=site.get("CF", None))
+
+        print(f"Calculating alpha dose for site: {site.get('name', '')}")
 
         total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+
+        if total_marrow_mass == 0:
+            print(f"Warning: Total marrow mass for site {site.get('name', '')} is zero. Skipping dose calculation.")
+            continue
+
         total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
 
-    elif source_tissue == "TBS":
+        for em in nuclide.emissions:
+            if em.radiation_type not in ["A"]:
+                continue
 
-        total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
-        icrp_cf = mass_data.get(site.get("name", ""), {}).get("ICRP_CF", None)
-        total_red_marrow_mass = total_marrow_mass * icrp_cf
+            energy = em.energy
 
-    electron_saf_data = get_saf_data_electrons(site=site.get("name", ""),
-                                                source_tissue=source_tissue_dict[source_tissue],
-                                                CF=site.get("CF", None))
-    
-    for em in nuclide.emissions:
-        if em.radiation_type not in ["B-", "IC", "AE"]:
-            continue
-        energy = em.energy
-        Phi = interpolate_phi(energy=energy,
-                              saf_data=electron_saf_data,
-                              interpolation_technique=calculation_input.get("interpolation_technique", "linear"))
-        #print(f"Energy: {energy} MeV - Phi: {Phi} for site {site.get('name', '')}")
+            AF = interpolate_phi(energy=energy,
+                                  saf_data=alpha_af_data,
+                                  interpolation_technique=calculation_input.get("interpolation_technique", "linear"))
 
-        energy_absorbed_in_site += energy * Phi * em.yield_fraction*total_red_marrow_mass
-        energy_emitted_in_site += energy * em.yield_fraction
+            print(f"Energy: {energy} MeV - AF: {AF} for site {site.get('name', '')}")
 
-print(f"Total energy emitted in site {site.get('name', '')}: {energy_emitted_in_site} MeV")
-print(f"Total energy absorbed in site {site.get('name', '')}: {energy_absorbed_in_site} MeV")
-print(f"Absorbed fraction in site {site.get('name', '')}: {energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0}")
-    
+            energy_absorbed_in_site += energy * AF * em.yield_fraction
+            energy_emitted_in_site += energy * em.yield_fraction
+
+        total_energy_absorbed_in_MeV = energy_absorbed_in_site * site.get('total_corrected_cumulative_activity_MBqhrs', 0) * 3600*1e6 
+        total_energy_absorbed_in_J = total_energy_absorbed_in_MeV * 1.60218e-13 # TODO: Magic number - place elsewhere
+
+        absorbed_dose_Gy = total_energy_absorbed_in_J / (total_red_marrow_mass * 1e-3)  # mass in kg
+        site["absorbed_dose_Gy_alpha"] = absorbed_dose_Gy
+        site["fraction_energy_absorbed_alpha"] = energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0
+
+    return corr_sites
+
+calculate_absorbed_dose_alpha(corr_sites,
+                              source_tissue,
+                              nuclide,
+                              calculation_input,
+                              mass_data)
+
+# Dump the results to a JSON file
+
+with open("calculation_results.json", "w") as f:
+    json.dump(calculation_input, f, indent=4)
+
+
+#final_sites = calculate_absorbed_dose_electron(corr_sites,
+#                                      source_tissue,
+#                                        nuclide,
+#                                        calculation_input,
+#                                        mass_data)
+#
+#print("Final absorbed dose results:")
+#for site in final_sites:
+#    print(f"Site: {site.get('name', '')} - Absorbed dose (Gy): {site.get('absorbed_dose_Gy', 0)} - Fraction energy absorbed: {site.get('fraction_energy_absorbed', 0)}")
+
 
 
 

@@ -26,11 +26,11 @@ with open("predefined_data.json", "r") as f:
 # --- Real data ---------------------------------------------------------------
 
 PREDEFINED_VALUES = list(json_data.get("CHECKBOX_TITLES", {}).keys())
-SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", [])
+SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alpha-emitters with 7 fields
 
 
 # Field name lists for forms
-ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
+#ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
 
 ELECTRON_SITES = [
         "cranifacial_bones",
@@ -58,8 +58,7 @@ ALPHA_SITES = [
         "parietal_bone"
 ]
 
-#DEFAULT_VALUES_13 = {i: f"Default13_{i}" for i in ELECTRON_SITES}
-#DEFAULT_VALUES_7 = {i: f"Default7_{i}" for i in ALPHA_SITES}
+SITES_BOTH_ALPHA_ELECTRON = list(set(ELECTRON_SITES) & set(ALPHA_SITES))
 
 DEFAULT_VALUES_13 = {
     "cranifacial_bones": 38,
@@ -164,6 +163,7 @@ class DynamicFormApp(tk.Tk):
         super().__init__()
         self.title("Dynamic Form")
         self.geometry("800x800")
+        self.current_daughters = []  # Store daughters for selected nuclide
 
 
         # Extra numerical input field
@@ -177,8 +177,9 @@ class DynamicFormApp(tk.Tk):
         # Dropdown
         ttk.Label(self, text="Select or input radionuclide:").pack(anchor="w")
         self.combo = ttk.Combobox(self, values=PREDEFINED_VALUES)
-        self.combo.bind("<<ComboboxSelected>>", self.update_form)
+        self.combo.bind("<<ComboboxSelected>>", self.on_nuclide_selected)
         self.combo.pack(fill="x", padx=5, pady=5)
+
 
         # Radio buttons
         self.radio_choice = tk.StringVar(value="RM")
@@ -273,6 +274,12 @@ class DynamicFormApp(tk.Tk):
 
         # Handle second window instance
         self.checkbox_window = None
+    
+    def on_nuclide_selected(self, event=None):
+        selected = self.combo.get()
+        self.current_daughters = CHECKBOX_TITLES.get(selected, [])
+        print(f"Daughters for {selected}: {self.current_daughters}")
+        self.update_form(event)
 
     # --- form creation -----------------------------------------------------
 
@@ -380,15 +387,70 @@ class DynamicFormApp(tk.Tk):
             })
         data["fields"] = form_data
 
+
+        # Use the stored daughters list
+        all_daughters_for_selected = self.current_daughters
+
         # Checkbox window values
         if self.checkbox_window is not None:
             data["daughters"] = self.checkbox_window.get_values()
+
         else:
-            data["daughters"] = {}
+
+            if all_daughters_for_selected:
+                # If there are relevant daughters but window not opened, assume none selected
+                data["daughters"] = {title: 1 for title in all_daughters_for_selected}
+
+            else:
+                data["daughters"] = {}
 
         return data
 
     # --- calculation -------------------------------------------------------
+
+    def postprocess_results(self, results):
+        """Post-process and display results."""
+        print("\n=== Calculation Results ===")
+        for k, v in results.items():
+            print(k, ":", v)
+
+        # First check if selected radionuclide and daughters are not alpha emitters
+
+        nuclide = results["radionuclide"]
+        daughters = results["daughters"]
+        full_chain = [nuclide] + list(daughters.keys())
+
+        if nuclide not in SEVEN_FIELD_VALUES and not any(d not in SEVEN_FIELD_VALUES for d in daughters):
+            print("\nNote: Selected radionuclide is not an alpha emitter. No alpha-calculation needed.")
+            results["only_electron_calculation"] = True
+            return results
+        
+        else:
+            results["only_electron_calculation"] = False
+
+            # Now check if sites are compatible with alpha calculation
+
+            if "iliac_crest" in [f['name'] for f in results['fields'] if f['MBqhrs_per_ml']]:
+                print("Warning: 'iliac_crest' site is extra problematic")
+                results['incompatible_sites'] = ['iliac_crest']
+                results['sites_compatible'] = False
+                return results
+
+            sites = [f['name'] for f in results['fields'] if f['MBqhrs_per_ml']]
+
+            incompatible_sites = [s for s in sites if s not in SITES_BOTH_ALPHA_ELECTRON]
+
+            if len(incompatible_sites) > 0:
+                print("\nWarning: The following selected sites are incompatible with alpha and electron calculations ")
+                for s in incompatible_sites:
+                    print(f" - {s}")
+                results['incompatible_sites'] = incompatible_sites
+                results['sites_compatible'] = False
+                return results
+
+            else:
+                results['sites_compatible'] = True
+                return results
 
 
 
@@ -411,8 +473,7 @@ class DynamicFormApp(tk.Tk):
             print("Error: No radionuclide selected.")
             return
 
-        for k, v in inputs.items():
-            print(k, ":", v)
+        inputs = self.postprocess_results(inputs)
 
         # Save all input to a JSON file for further processing
 

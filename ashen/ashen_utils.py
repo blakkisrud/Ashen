@@ -98,6 +98,7 @@ class Nuclide:
     is_electron_emitter = None
     is_neutron_emitter = None
     is_fission_emitter = None
+    is_beta_emitter = None
 
     def calculate_alpha_energy(self, rbe_alpha = 1.0) -> float:
         """Calculate the total alpha energy for the decay of this radionuclide."""
@@ -441,6 +442,16 @@ def make_decay_chain_db(path=DECAY_CHAINS_PATH, emission_data=None, add_single_n
                 break
         else:
             nuc.is_electron_emitter = False
+
+    # Add a flag for beta emitters
+
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type == "B-":
+                nuc.is_beta_emitter = True
+                break
+        else:
+            nuc.is_beta_emitter = False
 
     # Add a flag for neutron emitters
     for nuc_name, nuc in db.nuclides.items():
