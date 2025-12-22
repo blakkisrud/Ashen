@@ -10,6 +10,10 @@ from ashen.ashen_utils import (
     convert_to_hours
 )
 
+from ashen.myelodose_backend import (
+    calculate_absorbed_dose_from_input_data
+)
+
 # --- Load predefined data -------------------------------------------------------
 
 # Read json file for checkbox data
@@ -91,6 +95,8 @@ CHECKBOX_TITLES = json_data.get("CHECKBOX_TITLES", {})
 # Mapping from checkbox title to value to display
 CHECKBOX_VALUES = json_data.get("CHECKBOX_VALUES", {})
 
+DO_SAVE_JSON = True
+
 # --- Checkbox window class ------------------------------------------------------
 
 
@@ -164,6 +170,7 @@ class DynamicFormApp(tk.Tk):
         self.title("Dynamic Form")
         self.geometry("800x800")
         self.current_daughters = []  # Store daughters for selected nuclide
+        self.checkbox_window = None  # Ensure checkbox_window is always defined
 
 
         # Extra numerical input field
@@ -266,11 +273,21 @@ class DynamicFormApp(tk.Tk):
         self.active_widgets = self.widgets_13
         #self.update_image()
 
-        # Buttons (create only once)
-        tk.Button(self, text="Apply ICRP CFs To All",
-              command=self.apply_defaults_to_all).pack(pady=10)
-        tk.Button(self, text="Run Calculation",
-              command=self.run_calculation).pack(pady=10)
+          # Buttons (create only once)
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Apply ICRP CFs To All",
+            command=self.apply_defaults_to_all).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Save To File",
+            command=self.save_to_file).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Run Calculation",
+            command=self.run_calculation).pack(side="left", padx=5)
+    def save_to_file(self):
+        """Save current input data to a file."""
+        inputs = self.collect_all_values()
+        with open("saved_input.json", "w") as f:
+            json.dump(inputs, f, indent=4)
+        print("Input data saved to saved_input.json")
 
         # Handle second window instance
         self.checkbox_window = None
@@ -452,8 +469,6 @@ class DynamicFormApp(tk.Tk):
                 results['sites_compatible'] = True
                 return results
 
-
-
     def run_calculation(self):
         inputs = self.collect_all_values()
 
@@ -475,10 +490,19 @@ class DynamicFormApp(tk.Tk):
 
         inputs = self.postprocess_results(inputs)
 
-        # Save all input to a JSON file for further processing
+        calc_result = calculate_absorbed_dose_from_input_data(inputs)
 
-        with open("calculation_input.json", "w") as f:
-            json.dump(inputs, f, indent=4)
+        if DO_SAVE_JSON:
+
+        # Save all input to a JSON file for further processing and debugging
+
+            with open("calculation_input.json", "w") as f:
+                json.dump(inputs, f, indent=4)
+
+            calc_result.save_to_json("calculation_results_test.json")
+
+            print("\nCalculation input and results saved to JSON files.")
+
 
 
 # --- run program ---------------------------------------------------------

@@ -79,6 +79,12 @@ def replace_simple_beta_with_full_spectrum(nuclide: Nuclide) -> Nuclide:
             )
             nuclide.emissions.append(new_emission)
 
+    # Print some sanity check info
+
+    total_yield = sum(em.yield_fraction for em in nuclide.emissions if em.radiation_type == "B-")
+    mean_energy = sum(em.energy * em.yield_fraction for em in nuclide.emissions if em.radiation_type == "B-") / total_yield if total_yield > 0 else 0
+    print(f"Nuclide: {nuclide.name} - Total beta yield: {total_yield:.6f} (should be 1.0), Mean beta energy: {mean_energy:.6f} MeV, Expected mean energy: {beta_yields['meanE_MeV']:.6f} MeV")
+
     return nuclide
 
 if __name__ == "__main__":

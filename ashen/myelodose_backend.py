@@ -16,19 +16,19 @@ import sys
 import seaborn as sns
 import json
 import pickle as pkl
+from dataclasses import dataclass, field
 
 from ashen.ashen_utils import (
+    get_daughters,
     make_decay_chain_db,
     load_icrp_107)
 
-from beta_spectrum_analysis import (
+from ashen.beta_spectrum_analysis import (
     replace_simple_beta_with_full_spectrum
 )
 
-REMAKE_DB = True
+REMAKE_DB = False
 SILENCE_WARNING = True
-
-#--- Skeletal site data - electrons ------------
 
 with open("combined_saf.yaml", "r") as f:
     SKELETAL_SITE_DATA_ELECTRONS = yaml.safe_load(f)
@@ -37,8 +37,6 @@ with open("combined_saf.yaml", "r") as f:
 
 with open("combined_alpha_saf.yaml", "r") as f:
     SKELETAL_SITE_DATA_ALPHAS = yaml.safe_load(f)
-
-#sites = list(SKELETAL_SITE_DATA_ELECTRONS.keys())
 
 if REMAKE_DB:
     emission_energy = load_icrp_107()
@@ -53,11 +51,40 @@ else:
     with open("decay_chain_db.pkl", "rb") as f:
         decay_chain_db = pkl.load(f)
 
-
 source_tissue_dict = {
     "RM": "red_marrow",
     "TBS": "tbs"
 } # TODO: Should be rewritten to match other parts of the code
+
+# --- Make a dataclass to hold result of calculation
+#     data ------------
+
+@dataclass
+class CalculationResult:
+    alpha_RBE_value: float = 0.0
+    parent_nuclide: str = ""
+    radionuclide: str = ""
+    source_tissue: str = ""
+    name: str = ""
+    CF: str = ""
+    total_corrected_cumulative_activity_MBqhrs: float = 0.0
+    only_electron_calculation: bool = False
+    sites_compatible: bool = True
+    include_in_final_results: bool = True
+    absorbed_dose_Gy_electrons: float = 0.0
+    absorbed_dose_Gy_alpha: float = 0.0
+    fraction_energy_absorbed_electrons: float = 0.0
+    fraction_energy_absorbed_alpha: float = 0.0
+
+@dataclass
+class CombinedCalculationResults:
+    results: list = field(default_factory=list)
+
+    def save_to_json(self, filename: str):
+        with open(filename, 'w') as f:
+            json.dump([result.__dict__ for result in self.results], f, indent=4)
+
+
 
 def retrieve_reference_mass_target(path_to_data = "resources\site_volumes.xlsx"):
 
@@ -229,16 +256,15 @@ def saf_from_emission_data(emission_data,
 
     return saf_values
 
-#ircrp_masses = retrieve_reference_mass_target()
 
 # Function to parse input from GUI and run calculations
 
-with open("calculation_input.json", "r") as f:
-    calculation_input = json.load(f)
-
-sites = calculation_input.get("fields", [])
-
-source_tissue = calculation_input.get("source_tissue", None)
+#with open("calculation_input.json", "r") as f:
+#    calculation_input = json.load(f)
+#
+#sites = calculation_input.get("fields", [])
+#
+#source_tissue = calculation_input.get("source_tissue", None)
 
 def correct_cumulative_activity(sites, source_tissue):
 
@@ -288,20 +314,6 @@ def correct_cumulative_activity(sites, source_tissue):
 
     return sites
 
-# Have the elements to perform the electron calculation now
-
-corr_sites = correct_cumulative_activity(sites, source_tissue)
-
-nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
-
-if nuclide.is_beta_emitter:
-
-    nuclide = replace_simple_beta_with_full_spectrum(nuclide)
-
-print("Corrected sites data:")
-print(corr_sites)
-
-mass_data = mass_data_sites()
 
 def calculate_absorbed_dose_electron(corr_sites, 
                            source_tissue: str,
@@ -313,8 +325,6 @@ def calculate_absorbed_dose_electron(corr_sites,
 
         energy_emitted_in_site = 0
         energy_absorbed_in_site = 0
-
-        # TODO: Have to add tissue information here
 
         if source_tissue == "RM":
 
@@ -402,16 +412,309 @@ def calculate_absorbed_dose_alpha(corr_sites,
 
     return corr_sites
 
-calculate_absorbed_dose_alpha(corr_sites,
-                              source_tissue,
-                              nuclide,
-                              calculation_input,
-                              mass_data)
+def electron_dose_to_site(
+    site: dict,
+    nuclide,
+    source_tissue: str,
+    mass_data,
+    branching_ratio: float = 1.0
+):
+    
+    # This should return absorbed dose from electrons 
+    # and the fraction of energy absorbed
+
+    # Placeholder for future implementation
+
+    energy_emitted_in_site = 0
+    energy_absorbed_in_site = 0
+
+    energy_emitted_by_type = {}
+    energy_absorbed_by_type = {}
+
+    if source_tissue == "RM":
+
+        total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+        total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
+
+    elif source_tissue == "TBS":
+
+        total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+        icrp_cf = mass_data.get(site.get("name", ""), {}).get("ICRP_CF", None)
+        total_red_marrow_mass = total_marrow_mass * icrp_cf
+
+    electron_saf_data = get_saf_data_electrons(site=site.get("name", ""),
+                                                source_tissue=source_tissue_dict[source_tissue],
+                                                CF=site.get("CF", None))
+    
+    for em in nuclide.emissions:
+        if em.radiation_type not in ["B-", "IE", "AE"]:
+            continue
+        energy = em.energy
+
+        Phi = interpolate_phi(energy=energy, # TODO: Should get this from calculation_input
+                              saf_data=electron_saf_data,
+                              interpolation_technique="linear")
+
+        energy_absorbed_in_site += energy * Phi * em.yield_fraction*total_red_marrow_mass
+        energy_emitted_in_site += energy * em.yield_fraction
+
+        energy_emitted_by_type[em.radiation_type] = energy_emitted_by_type.get(em.radiation_type, 0) + energy * em.yield_fraction
+        energy_absorbed_by_type[em.radiation_type] = energy_absorbed_by_type.get(em.radiation_type, 0) + energy * Phi * em.yield_fraction*total_red_marrow_mass
+
+    total_energy_absorbed_in_MeV = energy_absorbed_in_site * site.get('total_corrected_cumulative_activity_MBqhrs', 0) * 3600*1e6*branching_ratio
+    total_energy_absorbed_in_J = total_energy_absorbed_in_MeV * 1.60218e-13 # TODO: Magic number - place elsewhere
+    absorbed_dose_Gy = total_energy_absorbed_in_J / (total_red_marrow_mass * 1e-3)  # mass in kg
+
+    result_dict = {}
+
+    result_dict['absorbed_dose_Gy'] = absorbed_dose_Gy
+    result_dict['fraction_energy_absorbed'] = energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0
+    result_dict['energy_emitted_by_type'] = energy_emitted_by_type
+    result_dict['energy_absorbed_by_type'] = energy_absorbed_by_type
+
+    return result_dict
+
+def alpha_dose_to_site(
+    site: dict,
+    nuclide,
+    source_tissue: str,
+    mass_data,
+    branching_ratio: float = 1.0
+):
+    
+    energy_emitted_in_site = 0
+    energy_absorbed_in_site = 0
+
+    alpha_af_data = get_af_data_alphas(site=site.get("name", ""),
+                                         source_tissue=source_tissue_dict[source_tissue],
+                                            CF=site.get("CF", None))
+    
+    total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
+
+    if total_marrow_mass == 0:
+        print(f"Warning: Total marrow mass for site {site.get('name', '')} is zero. Skipping dose calculation.")
+        return None
+    
+    total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
+
+    for em in nuclide.emissions:
+        if em.radiation_type not in ["A"]:
+            continue
+
+        energy = em.energy
+
+        AF = interpolate_phi(energy=energy,
+                              saf_data=alpha_af_data,
+                              interpolation_technique="linear")
+
+        print(f"Energy: {energy} MeV - AF: {AF} for site {site.get('name', '')}")
+
+        energy_absorbed_in_site += energy * AF * em.yield_fraction
+        energy_emitted_in_site += energy * em.yield_fraction
+
+    total_energy_absorbed_in_MeV = energy_absorbed_in_site * site.get('total_corrected_cumulative_activity_MBqhrs', 0) * 3600*1e6*branching_ratio
+    total_energy_absorbed_in_J = total_energy_absorbed_in_MeV * 1.60218e-13 # TODO: Magic number - place elsewhere
+
+    absorbed_dose_Gy = total_energy_absorbed_in_J / (total_red_marrow_mass * 1e-3)  # mass in kg
+
+    result_dict = {}
+
+    result_dict['absorbed_dose_Gy'] = absorbed_dose_Gy
+    result_dict['fraction_energy_absorbed'] = energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0
+    result_dict["energy_emitted_in_site"] = energy_emitted_in_site
+    result_dict["energy_absorbed_in_site"] = energy_absorbed_in_site
+    
+    return result_dict
+    
+def calculate_absorbed_dose_to_site(
+    site: dict,
+    nuclide,
+    calculation_input,
+    mass_data,
+    branching_ratio: float = 1.0
+):
+    
+    # Should return a calculation result dataclass instance
+    
+    calculation_results = CalculationResult()
+
+    if calculation_input.get("only_electron_calculation", False):
+
+        result_tmp_electrons = electron_dose_to_site(
+            site=site,
+            nuclide=nuclide,
+            source_tissue=calculation_input.get("source_tissue", ""),
+            mass_data=mass_data,
+            branching_ratio=branching_ratio
+        )
+
+    else:
+
+        result_tmp_electrons = electron_dose_to_site(
+            site=site,
+            nuclide=nuclide,
+            source_tissue=calculation_input.get("source_tissue", ""),
+            mass_data=mass_data,
+            branching_ratio=branching_ratio
+        )
+
+        result_tmp_alpha = alpha_dose_to_site(
+            site=site,
+            nuclide=nuclide,
+            source_tissue=calculation_input.get("source_tissue", ""),
+            mass_data=mass_data,
+            branching_ratio=branching_ratio
+        )
+
+    # Populate the calculation results dataclass
+
+    calculation_results.parent_nuclide = calculation_input.get("radionuclide", "")
+    calculation_results.radionuclide = nuclide.name
+    calculation_results.source_tissue = calculation_input.get("source_tissue", "")
+    calculation_results.name = site.get("name", "")
+    calculation_results.CF = site.get("CF", "")
+
+    calculation_results.total_corrected_cumulative_activity_MBqhrs = site.get("total_corrected_cumulative_activity_MBqhrs", 0)
+    calculation_results.only_electron_calculation = calculation_input.get("only_electron_calculation", False)
+    calculation_results.sites_compatible = calculation_input.get("sites_compatible", True)
+
+    if result_tmp_electrons is not None:
+        calculation_results.absorbed_dose_Gy_electrons = result_tmp_electrons.get("absorbed_dose_Gy", 0)
+        calculation_results.fraction_energy_absorbed_electrons = result_tmp_electrons.get("fraction_energy_absorbed", 0)
+
+    if not calculation_input.get("only_electron_calculation", False):
+        if result_tmp_alpha is not None:
+            calculation_results.absorbed_dose_Gy_alpha = result_tmp_alpha.get("absorbed_dose_Gy", 0)
+            calculation_results.fraction_energy_absorbed_alpha = result_tmp_alpha.get("fraction_energy_absorbed", 0)
+
+    return calculation_results
+
+def calculate_absorbed_dose_to_chain(
+    site: dict,
+    calculation_input,
+    mass_data
+):
+    
+    # Calculate the absorbed dose from the entire decay chain
+
+    if len(calculation_input.get("daughters", [])) == 0:
+        return calculate_absorbed_dose_to_site(
+            site=site,
+            nuclide=decay_chain_db.get_decay_info(calculation_input.get("radionuclide", "")),
+            calculation_input=calculation_input,
+            mass_data=mass_data
+        )
+    
+    else:
+
+        combined_result = CombinedCalculationResults()
+
+        daughter_dict = calculation_input.get("daughters", {})
+        parent_nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
+
+        branching_ratios = get_daughters(decay_chain_db, parent_nuclide.name)
+
+        for daughter, calc_daughter in zip(daughter_dict.keys(), daughter_dict.values()):
+
+            if calc_daughter == 1:
+
+                daughter_nuclide = decay_chain_db.get_decay_info(daughter)
+
+                daughter_result = calculate_absorbed_dose_to_site(
+                    site=site,
+                    nuclide=daughter_nuclide,
+                    calculation_input=calculation_input,
+                    mass_data=mass_data,
+                    branching_ratio=branching_ratios.get(daughter, 1.0)
+                )
+
+                combined_result.results.append(daughter_result)
+
+            print(f"Doing daughter: {daughter} - Included: {calc_daughter}")
+
+        # Add parent nuclide calculation as well
+
+        parent_result = calculate_absorbed_dose_to_site(
+            site=site,
+            nuclide=parent_nuclide,
+            calculation_input=calculation_input,
+            mass_data=mass_data,
+            branching_ratio=1.0
+        )
+
+        combined_result.results.append(parent_result)
+
+        return combined_result
+
+def calculate_absorbed_dose_from_input_data(
+    calculation_input: dict
+):
+
+    sites = calculation_input.get("fields", [])
+    source_tissue = calculation_input.get("source_tissue", None)
+
+    corr_sites = correct_cumulative_activity(sites, source_tissue)
+
+    nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
+
+    if nuclide.is_beta_emitter:
+
+        nuclide = replace_simple_beta_with_full_spectrum(nuclide)
+
+    mass_data = mass_data_sites()
+
+    combined_results = CombinedCalculationResults()
+
+    for site in corr_sites:
+
+        calc_result = calculate_absorbed_dose_to_chain(
+            site=site,
+            calculation_input=calculation_input,
+            mass_data=mass_data
+        )
+
+        if isinstance(calc_result, CombinedCalculationResults):
+            combined_results.results.extend(calc_result.results)
+        else:
+            combined_results.results.append(calc_result)
+
+    return combined_results
+
+#calc_result = calculate_absorbed_dose_to_chain(
+#    site=corr_sites[0],
+#    calculation_input=calculation_input,
+#    mass_data=mass_data
+#)
+#
+#print("Calculation result for first site:")
+#print(calc_result)
+#calc_result.save_to_json("calculation_result_test.json")
+
+# Have the elements to perform the electron calculation now
+
+#corr_sites = correct_cumulative_activity(sites, source_tissue)
+#
+#nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
+#
+#if nuclide.is_beta_emitter:
+#
+#    nuclide = replace_simple_beta_with_full_spectrum(nuclide)
+#
+#print("Corrected sites data:")
+#print(corr_sites)
+#
+#mass_data = mass_data_sites()
+
+#calculate_absorbed_dose_alpha(corr_sites,
+#                              source_tissue,
+#                              nuclide,
+#                              calculation_input,
+#                              mass_data)
 
 # Dump the results to a JSON file
 
-with open("calculation_results.json", "w") as f:
-    json.dump(calculation_input, f, indent=4)
+#with open("calculation_results.json", "w") as f:
+#    json.dump(calculation_input, f, indent=4)
 
 
 #final_sites = calculate_absorbed_dose_electron(corr_sites,
@@ -423,6 +726,10 @@ with open("calculation_results.json", "w") as f:
 #print("Final absorbed dose results:")
 #for site in final_sites:
 #    print(f"Site: {site.get('name', '')} - Absorbed dose (Gy): {site.get('absorbed_dose_Gy', 0)} - Fraction energy absorbed: {site.get('fraction_energy_absorbed', 0)}")
+
+#ircrp_masses = retrieve_reference_mass_target()
+
+#--- Skeletal site data - electrons ------------
 
 
 
