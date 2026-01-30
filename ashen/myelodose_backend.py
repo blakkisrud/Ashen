@@ -93,6 +93,7 @@ ELECTRON_SURROGATES= {
 
 REMAKE_DB = False
 SILENCE_WARNING = True
+USE_UNITY_PHI_FOR_ELECTRON_SURROGATE = True
 
 with open("combined_saf.yaml", "r") as f:
     SKELETAL_SITE_DATA_ELECTRONS = yaml.safe_load(f)
@@ -164,6 +165,7 @@ class CalculationResult:
     fraction_energy_absorbed_alpha: float = 0.0
     surrogate_electron_site: str = ""
     surrogate_electron_site_used: bool = False
+    electron_unity_saf_used: bool = False
 
 @dataclass
 class CombinedCalculationResults:
@@ -189,7 +191,8 @@ class CombinedCalculationResults:
                 "CF": result.CF,
                 "alpha_RBE_value": result.alpha_RBE_value,
                 "site": result.name,
-                "surrogate_electron_site_used": result.surrogate_electron_site_used
+                "surrogate_electron_site_used": result.surrogate_electron_site_used,
+                "electron_unity_saf_used": result.electron_unity_saf_used
             })
 
         return rows
@@ -351,11 +354,27 @@ def interpolate_phi(energy: float,
 
     return None
 
-def saf_from_emission_data(emission_data, 
+def _saf_from_emission_data(emission_data, 
                            site: str,
                            source_tissue: str,
                            CF: str,
                            interpolation_technique: str):
+    
+    """
+
+    This is potentially a legacy function
+    that will be removed later.
+    
+    :param emission_data: Description
+    :param site: Description
+    :type site: str
+    :param source_tissue: Description
+    :type source_tissue: str
+    :param CF: Description
+    :type CF: str
+    :param interpolation_technique: Description
+    :type interpolation_technique: str
+    """
     
     electron_emission_types = ["B-", "IC", "AE"]
 
@@ -435,11 +454,15 @@ def correct_cumulative_activity(sites, source_tissue):
     return sites
 
 
-def calculate_absorbed_dose_electron(corr_sites, 
+def _calculate_absorbed_dose_electron(corr_sites, 
                            source_tissue: str,
                            nuclide,
                            calculation_input,
                            mass_data):
+    
+    """
+    This is a potential legacy function that may be removed later.
+    """
 
     for site in corr_sites:
 
@@ -537,7 +560,8 @@ def electron_dose_to_site(
     nuclide,
     source_tissue: str,
     mass_data,
-    branching_ratio: float = 1.0
+    branching_ratio: float = 1.0,
+    use_unity_saf: bool = False
 ):
     
     # This should return absorbed dose from electrons 
@@ -578,9 +602,13 @@ def electron_dose_to_site(
             continue
         energy = em.energy
 
-        Phi = interpolate_phi(energy=energy, # TODO: Should get this from calculation_input
-                              saf_data=electron_saf_data,
-                              interpolation_technique="linear")
+        if use_unity_saf: # Override for surrogate sites
+            Phi = 1.0/total_red_marrow_mass
+        else:
+            Phi = interpolate_phi(energy=energy, # TODO: Should get this from calculation_input
+                                  saf_data=electron_saf_data,
+                                  interpolation_technique="linear")
+        
 
         energy_absorbed_in_site += energy * Phi * em.yield_fraction*total_red_marrow_mass
         energy_emitted_in_site += energy * em.yield_fraction
@@ -699,12 +727,17 @@ def calculate_absorbed_dose_to_site(
             calculation_results.surrogate_electron_site = surrogate_site_name
             calculation_results.surrogate_electron_site_used = True
 
+            if USE_UNITY_PHI_FOR_ELECTRON_SURROGATE:
+                print("Using unity SAF for surrogate electron site calculation.")
+                calculation_results.electron_unity_saf_used = True
+
             result_tmp_electrons = electron_dose_to_site(
                 site=surrogate_site,
                 nuclide=nuclide,
                 source_tissue=calculation_input.get("source_tissue", ""),
                 mass_data=mass_data,
-                branching_ratio=branching_ratio
+                branching_ratio=branching_ratio,
+                use_unity_saf=USE_UNITY_PHI_FOR_ELECTRON_SURROGATE
             )
 
         else:
@@ -1012,13 +1045,26 @@ def make_plot_figure(calc_results,
 
         if site_df['surrogate_electron_site_used'].any():
 
-            ax.bar(
-                x,
-                site_df['dose_electron'],
-                bottom=site_df[alpha_dose_to_plot],
-                label='Electron AD (surrogate)',
-                color='tab:gray'
-            )
+            if site_df['electron_unity_saf_used'].any():
+
+                ax.bar(
+                    x,
+                    site_df['dose_electron'],
+                    bottom=site_df[alpha_dose_to_plot],
+                    label='Electron AD (unity SAF)',
+                    color='tab:gray'
+                )
+
+            else:
+                ax.bar(
+                    x,
+                    site_df['dose_electron'],
+                    bottom=site_df[alpha_dose_to_plot],
+                    label='Electron AD (surrogate)',
+                    hatch='//',
+                    edgecolor='black',
+                    fill=False
+                )
 
             surrogate_axes.append(ax)
 

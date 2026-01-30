@@ -109,6 +109,7 @@ CHECKBOX_VALUES = json_data.get("CHECKBOX_VALUES", {})
 
 DO_SAVE_JSON = True
 
+
 # --- Checkbox window class ------------------------------------------------------
 
 
@@ -183,6 +184,10 @@ class DynamicFormApp(tk.Tk):
         self.geometry("900x900")
         self.current_daughters = []  # Store daughters for selected nuclide
         self.checkbox_window = None  # Ensure checkbox_window is always defined
+
+        # ...existing code...
+
+        # ...existing code...
 
 
         # Extra numerical input field
@@ -322,10 +327,8 @@ class DynamicFormApp(tk.Tk):
 
     def show_results_window(self):
         # Ensure that calculation have been run and results are available
-
         results = self.run_calculation()
         rows = results.prepare_rows_for_plotting()
-
         ResultsWindow(self, rows, results)
 
     def save_to_file(self):
@@ -334,8 +337,6 @@ class DynamicFormApp(tk.Tk):
         with open("saved_input.json", "w") as f:
             json.dump(inputs, f, indent=4)
         print("Input data saved to saved_input.json")
-
-        # Handle second window instance
         self.checkbox_window = None
     
     def on_nuclide_selected(self, event=None):
@@ -482,22 +483,13 @@ class DynamicFormApp(tk.Tk):
 
     def run_calculation(self):
         inputs = self.collect_all_values()
-
         inputs = post_process_back_end_inputs(inputs)
-
         calc_result = calculate_absorbed_dose_from_input_data(inputs)
-
         if DO_SAVE_JSON:
-
-        # Save all input to a JSON file for further processing and debugging
-
             with open("calculation_input.json", "w") as f:
                 json.dump(inputs, f, indent=4)
-
             calc_result.save_to_json("new_output_results.json")
-
             print("\nCalculation input and results saved to JSON files.")
-
         return calc_result
 
 
@@ -521,7 +513,13 @@ class ResultsWindow(tk.Toplevel):
         self._build_totals(rows)
 
         # Set a label explaining the asterisk
-        tk.Label(self, text="* Surrogate electron site used for dose calculation", font=("TkDefaultFont", 8, "italic")).pack()
+        if any(r.get("surrogate_electron_site_used", False) for r in rows) and any(r.get("electron_unity_saf_used", False) for r in rows):
+            tk.Label(self, text="* Unity SAF used for surrogate electron site calculation", font=("TkDefaultFont", 8, "italic")).pack()
+        elif any(r.get("electron_unity_saf_used", False) for r in rows):
+            tk.Label(self, text="* Surrogate electron site used for dose calculation", font=("TkDefaultFont", 8, "italic")).pack()
+        else:
+            tk.Label(self, text="", font=("TkDefaultFont", 8, "italic")).pack()
+        
 
         self.plot_window = None
         plot_btn = tk.Button(self, text="Show Plot", command=lambda: self.show_plot(rows, results))
