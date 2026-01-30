@@ -1,17 +1,29 @@
 import tkinter as tk
 from tkinter import ttk
+
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+
 import json
 import nibabel as nib
 import numpy as np
 import vtk
+
 from vtk.util import numpy_support  
 from PIL import Image, ImageTk
+from collections import defaultdict
+
+import pandas as pd
+
 from ashen.ashen_utils import (
     convert_to_hours
 )
 
 from ashen.myelodose_backend import (
-    calculate_absorbed_dose_from_input_data
+    calculate_absorbed_dose_from_input_data,
+    CombinedCalculationResults,
+    post_process_back_end_inputs,
+    make_plot_figure,
 )
 
 # --- Load predefined data -------------------------------------------------------
@@ -37,7 +49,7 @@ SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alp
 #ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
 
 ELECTRON_SITES = [
-        "cranifacial_bones",
+        "craniofacial_bones",
         "mandible",
         "scapulae",
         "clavicles",
@@ -65,7 +77,7 @@ ALPHA_SITES = [
 SITES_BOTH_ALPHA_ELECTRON = list(set(ELECTRON_SITES) & set(ALPHA_SITES))
 
 DEFAULT_VALUES_13 = {
-    "cranifacial_bones": 38,
+    "craniofacial_bones": 38,
     "mandible": 38,
     "scapulae": 38,
     "clavicles": 33,
@@ -167,8 +179,8 @@ class CheckBoxWindow(tk.Toplevel):
 class DynamicFormApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Dynamic Form")
-        self.geometry("800x800")
+        self.title("Myelodose Beta")
+        self.geometry("900x900")
         self.current_daughters = []  # Store daughters for selected nuclide
         self.checkbox_window = None  # Ensure checkbox_window is always defined
 
@@ -177,7 +189,7 @@ class DynamicFormApp(tk.Tk):
         num_frame = tk.Frame(self)
         num_frame.pack(fill="x", padx=5, pady=5)
         tk.Label(num_frame, text="Alpha RBE value:").pack(side="left")
-        self.alpha_RBE_var = tk.StringVar()
+        self.alpha_RBE_var = tk.StringVar(value="1.0")
         self.alpha_RBE_entry = tk.Entry(num_frame, textvariable=self.alpha_RBE_var)
         self.alpha_RBE_entry.pack(side="left", padx=5)
 
@@ -198,9 +210,18 @@ class DynamicFormApp(tk.Tk):
                        variable=self.radio_choice, value="TBS").pack(side="left", padx=10)
 
 
+
+        # Suppress warnings radio button
+        self.supress_warnings = tk.StringVar(value="no")
+        warn_frame = tk.Frame(self)
+        warn_frame.pack(pady=5)
+        tk.Label(warn_frame, text="Suppress warnings:").pack(side="left")
+        tk.Radiobutton(warn_frame, text="Yes", variable=self.supress_warnings, value="yes").pack(side="left")
+        tk.Radiobutton(warn_frame, text="No", variable=self.supress_warnings, value="no").pack(side="left")
+
         # Button → open second window
         tk.Button(self, text="Select daughters",
-              command=self.open_checkbox_window).pack(pady=10)
+            command=self.open_checkbox_window).pack(pady=10)
 
         # Main frame for layout
         self.main_frame = tk.Frame(self)
@@ -269,11 +290,10 @@ class DynamicFormApp(tk.Tk):
         self.form_13, self.widgets_13 = self.create_form(13, ELECTRON_SITES)
         self.form_7, self.widgets_7 = self.create_form(7, ALPHA_SITES)
 
-
         self.active_widgets = self.widgets_13
         #self.update_image()
 
-          # Buttons (create only once)
+        # Buttons (create only once)
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=10)
         tk.Button(btn_frame, text="Apply ICRP CFs To All",
@@ -282,6 +302,32 @@ class DynamicFormApp(tk.Tk):
             command=self.save_to_file).pack(side="left", padx=5)
         tk.Button(btn_frame, text="Run Calculation",
             command=self.run_calculation).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Clear Input",
+            command=self.clear_all_inputs).pack(side="left", padx=5)
+
+        # Add Results button for demonstration
+        tk.Button(btn_frame, text="Show Results Window",
+            command=self.show_results_window).pack(side="left", padx=5)
+
+    def clear_all_inputs(self):
+        # Clear alpha RBE entry
+        self.alpha_RBE_var.set("")
+        # Reset radio buttons
+        self.radio_choice.set("RM")
+        # Clear all form entries and combos
+        for widgets in [self.widgets_13, self.widgets_7]:
+            for w in widgets:
+                w['entry'].delete(0, 'end')
+                w['combo'].set("")
+
+    def show_results_window(self):
+        # Ensure that calculation have been run and results are available
+
+        results = self.run_calculation()
+        rows = results.prepare_rows_for_plotting()
+
+        ResultsWindow(self, rows, results)
+
     def save_to_file(self):
         """Save current input data to a file."""
         inputs = self.collect_all_values()
@@ -305,6 +351,10 @@ class DynamicFormApp(tk.Tk):
         widgets = []
         dropdown_vals = [str(v) for v in range(10, 110, 10)]
 
+        # Add headers above input and combo columns
+        tk.Label(frame, text="MBq*hrs/ml", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=1, sticky="ew", padx=5, pady=(0, 2))
+        tk.Label(frame, text="Cellularity factor", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=2, sticky="ew", padx=5, pady=(0, 2))
+
         for i in range(n):
             row = i + 1
             if field_names and i < len(field_names):
@@ -312,18 +362,17 @@ class DynamicFormApp(tk.Tk):
             else:
                 label_text = f"Field {row}:"
 
-            tk.Label(frame, text=label_text).grid(row=i, column=0, sticky="w")
+            tk.Label(frame, text=label_text).grid(row=row, column=0, sticky="w")
 
             entry = tk.Entry(frame)
-            entry.grid(row=i, column=1, sticky="ew", padx=5)
-            #entry.bind("<KeyRelease>", lambda event: self.update_image())
+            entry.grid(row=row, column=1, sticky="ew", padx=5)
 
             combo = ttk.Combobox(frame, values=dropdown_vals, width=6)
-            combo.grid(row=i, column=2, sticky="ew", padx=5)
+            combo.grid(row=row, column=2, sticky="ew", padx=5)
 
             btn = tk.Button(frame, text="Use ICRP CF",
                             command=lambda c=combo, n=label_text: self.apply_default_combo(c, n))
-            btn.grid(row=i, column=3, padx=5)
+            btn.grid(row=row, column=3, padx=5)
 
             widgets.append({'name': label_text, 'entry': entry, 'combo': combo, 'btn': btn})
 
@@ -343,9 +392,15 @@ class DynamicFormApp(tk.Tk):
         if val in SEVEN_FIELD_VALUES:
             self.active_widgets = self.widgets_7
             self.show_form(self.form_7)
+            # Hide ICRP CF buttons for 7-field nuclides
+            for w in self.widgets_7:
+                w['btn'].grid_remove()
         else:
             self.active_widgets = self.widgets_13
             self.show_form(self.form_13)
+            # Show ICRP CF buttons for 13-field nuclides
+            for w in self.widgets_13:
+                w['btn'].grid()
 
     # --- defaults ----------------------------------------------------------
 
@@ -425,70 +480,10 @@ class DynamicFormApp(tk.Tk):
 
     # --- calculation -------------------------------------------------------
 
-    def postprocess_results(self, results):
-        """Post-process and display results."""
-        print("\n=== Calculation Results ===")
-        for k, v in results.items():
-            print(k, ":", v)
-
-        # First check if selected radionuclide and daughters are not alpha emitters
-
-        nuclide = results["radionuclide"]
-        daughters = results["daughters"]
-        full_chain = [nuclide] + list(daughters.keys())
-
-        if nuclide not in SEVEN_FIELD_VALUES and not any(d not in SEVEN_FIELD_VALUES for d in daughters):
-            print("\nNote: Selected radionuclide is not an alpha emitter. No alpha-calculation needed.")
-            results["only_electron_calculation"] = True
-            return results
-        
-        else:
-            results["only_electron_calculation"] = False
-
-            # Now check if sites are compatible with alpha calculation
-
-            if "iliac_crest" in [f['name'] for f in results['fields'] if f['MBqhrs_per_ml']]:
-                print("Warning: 'iliac_crest' site is extra problematic")
-                results['incompatible_sites'] = ['iliac_crest']
-                results['sites_compatible'] = False
-                return results
-
-            sites = [f['name'] for f in results['fields'] if f['MBqhrs_per_ml']]
-
-            incompatible_sites = [s for s in sites if s not in SITES_BOTH_ALPHA_ELECTRON]
-
-            if len(incompatible_sites) > 0:
-                print("\nWarning: The following selected sites are incompatible with alpha and electron calculations ")
-                for s in incompatible_sites:
-                    print(f" - {s}")
-                results['incompatible_sites'] = incompatible_sites
-                results['sites_compatible'] = False
-                return results
-
-            else:
-                results['sites_compatible'] = True
-                return results
-
     def run_calculation(self):
         inputs = self.collect_all_values()
 
-        print("\n=== Calculation Input ===")
-        for k, v in inputs.items():
-            print(k, ":", v)
-
-        print("\nStarting to process input...\n")
-
-        # Remove the fields that have no value
-        print("=== Processed Input ===")
-        processed_fields = [f for f in inputs["fields"] if f["MBqhrs_per_ml"]]
-        inputs["fields"] = processed_fields
-
-        # Check that a radionuclide was selected
-        if not inputs["radionuclide"]:
-            print("Error: No radionuclide selected.")
-            return
-
-        inputs = self.postprocess_results(inputs)
+        inputs = post_process_back_end_inputs(inputs)
 
         calc_result = calculate_absorbed_dose_from_input_data(inputs)
 
@@ -499,11 +494,285 @@ class DynamicFormApp(tk.Tk):
             with open("calculation_input.json", "w") as f:
                 json.dump(inputs, f, indent=4)
 
-            calc_result.save_to_json("calculation_results_test.json")
+            calc_result.save_to_json("new_output_results.json")
 
             print("\nCalculation input and results saved to JSON files.")
 
+        return calc_result
 
+
+# --- Window for displaying the results --------------------------------------------
+
+
+
+class ResultsWindow(tk.Toplevel):
+    def __init__(self, parent, rows, results):
+        super().__init__(parent)
+        self.title("Absorbed dose results")
+        self.geometry("700x500")
+
+        main = ttk.Frame(self)
+        main.pack(fill="both", expand=True, padx=10, pady=10)
+
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(0, weight=1)
+
+        self._build_table(main, rows)
+        self._build_totals(rows)
+
+        # Set a label explaining the asterisk
+        tk.Label(self, text="* Surrogate electron site used for dose calculation", font=("TkDefaultFont", 8, "italic")).pack()
+
+        self.plot_window = None
+        plot_btn = tk.Button(self, text="Show Plot", command=lambda: self.show_plot(rows, results))
+        plot_btn.pack(pady=10)
+
+
+        # Make a button to export results to a report
+
+        export_btn = tk.Button(self, text="Export to Report", command=self.export_to_report)
+        export_btn.pack(pady=10)
+
+    def show_plot(self, rows, results):
+        # Only one PlotWindow at a time
+        if self.plot_window is not None and self.plot_window.winfo_exists():
+            self.plot_window.lift()
+            return
+        self.plot_window = PlotWindow(self, rows, results)
+
+    def export_to_report(self):
+        # Placeholder for export functionality
+        print("Exporting results to report...")
+
+        report_path = "absorbed_dose_report.txt"
+
+        with open(report_path, "w") as f:
+            f.write("Absorbed Dose Report\n")
+            f.write("====================\n\n")
+            f.write("Radionuclide\tSite\tDose Alpha (Gy)\tDose Electron (Gy)\n")
+            for row in self.tree.get_children():
+                values = self.tree.item(row)['values']
+                f.write(f"{values[0]}\t{values[1]}\t{values[2]}\t{values[3]}\n")
+        print(f"Report saved to {report_path}")
+
+    def _copy_tree_selection(self, event=None):
+        tree = self.tree
+        selection = tree.selection()
+
+        if not selection:
+            return
+
+        rows = []
+        for item in selection:
+            values = tree.item(item, "values")
+            rows.append("\t".join(str(v) for v in values))
+
+        text = "\n".join(rows)
+
+        tree.clipboard_clear()
+        tree.clipboard_append(text)
+
+    def _build_table(self, parent, rows):
+        columns = (
+            "radionuclide",
+            'site',
+            "dose_alpha",
+            "dose_electron",
+        )
+
+        tree = ttk.Treeview(parent, columns=columns, show="headings")
+        tree.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+    
+        headings = {
+            "radionuclide": "Radionuclide",
+            "site": "Site",
+            "dose_alpha": "Absorbed dose α (Gy)",
+            "dose_electron": "Absorbed dose e⁻ (Gy)",
+        }
+
+        for col in columns:
+            tree.heading(col, text=headings[col])
+            tree.column(col, anchor="center")
+
+        for r in rows:
+
+            if r.get("surrogate_electron_site_used", False):
+                r["site_display"] = f"{r['site']}*"
+            else:
+                r["site_display"] = r["site"]
+
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    r["radionuclide"],
+                    r["site_display"],
+                    f"{r['dose_alpha']:.4g}",
+                    f"{r['dose_electron']:.4g}",
+                ),
+            )
+
+        self.tree = tree
+
+        tree.bind("<Control-c>", self._copy_tree_selection)
+
+    def _fmt_sig(self, value, sig=3):
+        if value == 0:
+            return "0"
+        return f"{value:.{sig}g}"
+
+    def _build_totals(self, rows):
+        """
+        Docstring for _build_totals
+        
+        :param self: The instance of the class
+        :param rows: The data rows containing absorbed dose 
+        """
+
+        totals = defaultdict(lambda: {
+            "alpha": 0.0,
+            "electron": 0.0,
+            "surrogate": False})
+
+        for r in rows:
+            site = r["site"]
+            totals[site]["alpha"] += r["dose_alpha"]
+            totals[site]["electron"] += r["dose_electron"]
+
+            if r.get("surrogate_electron_site_used", False):
+                totals[site]["surrogate"] = True
+
+        frame = ttk.Frame(self)
+        frame.pack(fill="x", pady=(10, 0))
+        
+        # Headers
+
+        headers = ("Site", "Total Absorbed dose α (Gy)", "Total Absorbed dose e⁻ (Gy)", "Total Absorbed dose (Gy)")
+
+        for col, text in enumerate(headers):
+            ttk.Label(
+                frame,
+                text=text,
+                font=("TkDefaultFont", 10, "bold"),
+            ).grid(row=0, column=col, sticky="w", padx=(0,15))
+
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=1, column=0, columnspan=len(headers), sticky="ew", pady=(2,4))
+        
+        self._totals_copy_lines = [
+            "\t".join(headers)
+        ]
+
+        for row_idx, (site, dose_data) in enumerate(totals.items(), start=2):
+            alpha = dose_data["alpha"]
+            electron = dose_data["electron"]
+            total = alpha + electron
+            surrogate_mark = "*" if dose_data["surrogate"] else ""
+
+            ttk.Label(
+                frame,
+                text=f"{site}{surrogate_mark}",
+            ).grid(row=row_idx, column=0, sticky="w", padx=(0,15))
+
+            ttk.Label(
+                frame,
+                text=self._fmt_sig(alpha),
+            ).grid(row=row_idx, column=1, sticky="w", padx=(0,15))
+
+            ttk.Label(
+                frame,
+                text=self._fmt_sig(electron),
+            ).grid(row=row_idx, column=2, sticky="w", padx=(0,15))
+
+            ttk.Label(
+                frame,
+                text=self._fmt_sig(total),
+            ).grid(row=row_idx, column=3, sticky="w", padx=(0,15))
+
+            self._totals_copy_lines.append(
+                f"{site}{surrogate_mark}\t{self._fmt_sig(alpha)}\t{self._fmt_sig(electron)}\t{self._fmt_sig(total)}"
+            )
+
+
+        #total_alpha = sum(r["dose_alpha"] for r in rows)
+        #total_electron = sum(r["dose_electron"] for r in rows)
+
+        #frame = ttk.Frame(self)
+        #frame.pack(fill="x", pady=(10, 0))
+
+        #ttk.Label(
+        #    frame,
+        #    text=f"Total absorbed dose  |  α: {total_alpha:.3g} Gy   e⁻: {total_electron:.3g} Gy",
+        #    font=("TkDefaultFont", 10, "bold"),
+        #).pack(anchor="center")
+
+class PlotWindow(tk.Toplevel):
+    def __init__(self, parent, rows, results):
+        super().__init__(parent)
+        self.title("Absorbed dose plot")
+        self.geometry("600x500")
+        self._build_plot(rows, results)
+
+        # Add a radio button to toggle RBE-adjusted alpha doses
+        # if there are alpha doses present
+        if any(r["dose_alpha"] > 0 for r in rows):
+
+            self.plot_rbe_adjusted_alpha = tk.BooleanVar(value=False)
+            rbe_check = tk.Checkbutton(self, text="RBE-adjusted alpha doses",
+                                       variable=self.plot_rbe_adjusted_alpha,
+                                       command=lambda: self._update_plot(rows, results))
+            rbe_check.pack(pady=5)
+
+    def _build_plot(self, rows, results):
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        fig = make_plot_figure(results)
+
+        #fig = Figure(figsize=(5, 4))
+        #ax = fig.add_subplot(111)
+
+        #nuclides = [r["radionuclide"] for r in rows]
+        #dose_electron = [r["dose_electron"] for r in rows]
+        #dose_alpha = [r["dose_alpha"] for r in rows]
+
+        #ax.bar(nuclides, dose_electron, label="Electrons")
+        #ax.bar(nuclides, dose_alpha, bottom=dose_electron, label="Alpha")
+
+        #ax.set_ylabel("Absorbed dose (Gy)")
+        #ax.set_title("Absorbed dose per radionuclide")
+        #ax.legend()
+        #ax.tick_params(axis="x", rotation=45)
+
+        #fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas = canvas
+
+    def _update_plot(self, rows, results):
+        fig = make_plot_figure(
+            results,
+            plot_rbe_adjusted_alpha=self.plot_rbe_adjusted_alpha.get()
+        )
+        self.canvas.figure = fig
+        self.canvas.draw()
+
+    # ---------------- TOTALS ----------------
+
+    def _build_totals(self, rows):
+        total_alpha = sum(r["dose_alpha"] for r in rows)
+        total_electron = sum(r["dose_electron"] for r in rows)
+
+        frame = ttk.Frame(self)
+        frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(
+            frame,
+            text=f"Total absorbed dose  |  α: {total_alpha:.3g} Gy   e⁻: {total_electron:.3g} Gy",
+            font=("TkDefaultFont", 10, "bold"),
+        ).pack(anchor="center")
 
 # --- run program ---------------------------------------------------------
 

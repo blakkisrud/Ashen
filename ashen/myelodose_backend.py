@@ -17,6 +17,10 @@ import seaborn as sns
 import json
 import pickle as pkl
 from dataclasses import dataclass, field
+import math
+from datetime import datetime as dt
+
+from jinja2 import Environment, PackageLoader, select_autoescape
 
 from ashen.ashen_utils import (
     get_daughters,
@@ -26,6 +30,66 @@ from ashen.ashen_utils import (
 from ashen.beta_spectrum_analysis import (
     replace_simple_beta_with_full_spectrum
 )
+
+# --- Load predefined data -------------------------------------------------------
+
+# Read json file for checkbox data
+
+with open("predefined_data.json", "r") as f:
+    json_data = json.load(f)
+
+# --- Simulated data -------------------------------------------------------------
+
+#SEVEN_FIELD_VALUES = ["Ac-225", "Pb-212", "At-211"]
+#PREDEFINED_VALUES = ["Lu-177", "Y-90", "I-131"]
+#PREDEFINED_VALUES += list(SEVEN_FIELD_VALUES)
+
+# --- Real data ---------------------------------------------------------------
+
+PREDEFINED_VALUES = list(json_data.get("CHECKBOX_TITLES", {}).keys())
+SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alpha-emitters with 7 fields
+
+# Field name lists for forms
+#ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
+
+ELECTRON_SITES = [
+        "craniofacial_bones",
+        "mandible",
+        "scapulae",
+        "clavicles",
+        "sternum",
+        "ribs",
+        "cervical_vertebrae",
+        "thoracic_vertebrae",
+        "lumbar_vertebrae",
+        "sacrum",
+        "os_coxae",
+        "proximal_humeri",
+        "proximal_femora",
+]
+
+ALPHA_SITES = [
+        "cervical_vertebrae",
+        "femur_head",
+        "femur_neck",
+        "iliac_crest",
+        "lumbar_vertebrae",
+        "ribs",
+        "parietal_bone"
+]
+
+SITES_BOTH_ALPHA_ELECTRON = list(set(ELECTRON_SITES) & set(ALPHA_SITES))
+
+ELECTRON_SURROGATES= {
+    "femur_head": "proximal_femora",
+    "femur_neck": "proximal_femora",
+    "iliac_crest": "os_coxae",
+    "parietal_bone": "craniofacial_bones"
+}
+
+
+
+# -- Flags ---------------------------------------------------------------
 
 REMAKE_DB = False
 SILENCE_WARNING = True
@@ -51,6 +115,24 @@ else:
     with open("decay_chain_db.pkl", "rb") as f:
         decay_chain_db = pkl.load(f)
 
+# Global dict with ICRP-values for skeletal sites
+
+ICRP_SKELETAL_SITE_VALUES_ELECTRONS = {
+    "craniofacial_bones": 38,
+    "mandible": 38,
+    "scapulae": 38,
+    "clavicles": 33,
+    "sternum": 70,
+    "ribs": 70,
+    "cervical_vertebrae": 70,
+    "thoracic_vertebrae": 70,
+    "lumbar_vertebrae": 70,
+    "sacrum": 70,
+    "os_coxae": 48,
+    "proximal_humeri": 25,
+    "proximal_femora": 25,
+}
+
 source_tissue_dict = {
     "RM": "red_marrow",
     "TBS": "tbs"
@@ -61,6 +143,10 @@ source_tissue_dict = {
 
 @dataclass
 class CalculationResult:
+    """
+    Dataclass to hold the results of a single calculation
+    where "single" mean for a specific nuclide in a specific site.
+    """
     alpha_RBE_value: float = 0.0
     parent_nuclide: str = ""
     radionuclide: str = ""
@@ -73,17 +159,40 @@ class CalculationResult:
     include_in_final_results: bool = True
     absorbed_dose_Gy_electrons: float = 0.0
     absorbed_dose_Gy_alpha: float = 0.0
+    absorbed_dose_Gy_alpha_rbe_adjusted: float = 0.0
     fraction_energy_absorbed_electrons: float = 0.0
     fraction_energy_absorbed_alpha: float = 0.0
+    surrogate_electron_site: str = ""
+    surrogate_electron_site_used: bool = False
 
 @dataclass
 class CombinedCalculationResults:
     results: list = field(default_factory=list)
+    ordered_daughters: list = field(default_factory=list)
 
     def save_to_json(self, filename: str):
         with open(filename, 'w') as f:
             json.dump([result.__dict__ for result in self.results], f, indent=4)
 
+    def prepare_rows_for_plotting(self) -> list:
+        rows = []
+
+        for result in self.results:
+            if not result.include_in_final_results:
+                continue
+            rows.append({
+                "radionuclide": result.radionuclide,
+                "dose_alpha": result.absorbed_dose_Gy_alpha,
+                "dose_alpha_rbe_adjusted": result.absorbed_dose_Gy_alpha_rbe_adjusted,
+                "dose_electron": result.absorbed_dose_Gy_electrons,
+                "source_tissue": result.source_tissue,
+                "CF": result.CF,
+                "alpha_RBE_value": result.alpha_RBE_value,
+                "site": result.name,
+                "surrogate_electron_site_used": result.surrogate_electron_site_used
+            })
+
+        return rows
 
 
 def retrieve_reference_mass_target(path_to_data = "resources\site_volumes.xlsx"):
@@ -113,18 +222,21 @@ def mass_data_sites(path_to_data = "resources\site_volumes.xlsx"):
         spongiosa_volume_ml = row['Spongiosa volume']
         tbv_fraction = row['Trab bone fraction']
         marrow_mass_g = row['Marrow Mass']
+        icrp_cf = row['ICRP_CF']
 
         mass_data[site] = {
             "spongiosa_volume_ml": spongiosa_volume_ml,
             "tbv_fraction": tbv_fraction,
-            "total_marrow_mass_g": marrow_mass_g
+            "total_marrow_mass_g": marrow_mass_g,
+            "ICRP_CF": icrp_cf
+
         }
 
     return mass_data
 
 def get_saf_data_electrons(site: str, 
                            source_tissue: str,
-                           CF: str,
+                           CF: int,
                            skeletal_data = SKELETAL_SITE_DATA_ELECTRONS):
 
     """
@@ -146,6 +258,7 @@ def get_saf_data_electrons(site: str,
     # Check the CF is either ircrp or a valid number
     # Check also that CF is between 10 and 100 in 10 increments
 
+
     if CF != "icrp":
         try:
             cf_value = int(CF)
@@ -153,8 +266,11 @@ def get_saf_data_electrons(site: str,
                 raise ValueError("CF must be between 10 and 100 in increments of 10, or 'icrp'")
         except ValueError:
             raise ValueError("CF must be an integer between 10 and 100 in increments of 10, or 'icrp'")
-
-    saf_data = skeletal_data[site]["electrons"][source_tissue][CF]
+    
+    if source_tissue == "tbs": # Ugly hack to handle TBS case
+        saf_data = skeletal_data[site]["electrons"][source_tissue][0]
+    else:
+        saf_data = skeletal_data[site]["electrons"][source_tissue][CF]
 
     return saf_data
 
@@ -181,6 +297,11 @@ def get_af_data_alphas(site: str,
 
     # Check if CF is in the correct format
     # 
+
+    if CF == "icrp":
+        CF = str(ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site, None)) # Using the electron CFs
+
+
     if CF not in ["10", "20", "30", "40", "50", "60", "70", "80", "90", "100"]:
     
         raise ValueError("CF must be between 10 and 100 in increments of 10")
@@ -256,26 +377,25 @@ def saf_from_emission_data(emission_data,
 
     return saf_values
 
-
-# Function to parse input from GUI and run calculations
-
-#with open("calculation_input.json", "r") as f:
-#    calculation_input = json.load(f)
-#
-#sites = calculation_input.get("fields", [])
-#
-#source_tissue = calculation_input.get("source_tissue", None)
-
 def correct_cumulative_activity(sites, source_tissue):
 
     errors = []
 
     mass_data = mass_data_sites()
 
+    # TODO - Handle ICRP CF values here
+
     for site in sites:
         print(f"Processing site: {site}")
         cumulative_activity_conc = float(site.get("MBqhrs_per_ml", 0))
-        cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
+
+        cf_value = site.get("CF", None)
+        
+        if cf_value == "icrp":
+            cf_value = ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site.get("name", ""), None)/100.0
+        else:
+            cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
+
         print(f"Cumulative activity concentration: {cumulative_activity_conc} MBq·hrs/ml")
         print(f"Cellularity factor: {site.get('CF', 'N/A')}")
 
@@ -431,10 +551,17 @@ def electron_dose_to_site(
     energy_emitted_by_type = {}
     energy_absorbed_by_type = {}
 
+    cf = site.get("CF", None)
+
+    if cf == "icrp":
+        cf_value = ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site.get("name", ""), None)/100.0
+    else:
+        cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
+
     if source_tissue == "RM":
 
         total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
-        total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
+        total_red_marrow_mass = total_marrow_mass * cf_value
 
     elif source_tissue == "TBS":
 
@@ -444,7 +571,7 @@ def electron_dose_to_site(
 
     electron_saf_data = get_saf_data_electrons(site=site.get("name", ""),
                                                 source_tissue=source_tissue_dict[source_tissue],
-                                                CF=site.get("CF", None))
+                                                CF=cf)
     
     for em in nuclide.emissions:
         if em.radiation_type not in ["B-", "IE", "AE"]:
@@ -479,15 +606,23 @@ def alpha_dose_to_site(
     nuclide,
     source_tissue: str,
     mass_data,
-    branching_ratio: float = 1.0
+    branching_ratio: float = 1.0,
+    rbe_alpha_value: float = 1.0
 ):
     
     energy_emitted_in_site = 0
     energy_absorbed_in_site = 0
 
+    cf = site.get("CF", None)
+
+    if cf == "icrp":
+        cf_value = ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site.get("name", ""), None)/100.0
+    else:
+        cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
+
     alpha_af_data = get_af_data_alphas(site=site.get("name", ""),
                                          source_tissue=source_tissue_dict[source_tissue],
-                                            CF=site.get("CF", None))
+                                            CF=cf)
     
     total_marrow_mass = float(mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0))
 
@@ -495,7 +630,7 @@ def alpha_dose_to_site(
         print(f"Warning: Total marrow mass for site {site.get('name', '')} is zero. Skipping dose calculation.")
         return None
     
-    total_red_marrow_mass = total_marrow_mass * (float(site.get("CF", 0))/100.0)
+    total_red_marrow_mass = total_marrow_mass * cf_value
 
     for em in nuclide.emissions:
         if em.radiation_type not in ["A"]:
@@ -516,6 +651,7 @@ def alpha_dose_to_site(
     total_energy_absorbed_in_J = total_energy_absorbed_in_MeV * 1.60218e-13 # TODO: Magic number - place elsewhere
 
     absorbed_dose_Gy = total_energy_absorbed_in_J / (total_red_marrow_mass * 1e-3)  # mass in kg
+    absorbed_dose_Gy_rbe_adjusted = absorbed_dose_Gy * rbe_alpha_value
 
     result_dict = {}
 
@@ -523,6 +659,7 @@ def alpha_dose_to_site(
     result_dict['fraction_energy_absorbed'] = energy_absorbed_in_site/energy_emitted_in_site if energy_emitted_in_site > 0 else 0
     result_dict["energy_emitted_in_site"] = energy_emitted_in_site
     result_dict["energy_absorbed_in_site"] = energy_absorbed_in_site
+    result_dict["absorbed_dose_Gy_rbe_adjusted"] = absorbed_dose_Gy_rbe_adjusted
     
     return result_dict
     
@@ -531,7 +668,8 @@ def calculate_absorbed_dose_to_site(
     nuclide,
     calculation_input,
     mass_data,
-    branching_ratio: float = 1.0
+    branching_ratio: float = 1.0,
+    rbe_alpha_value: float = 1.0
 ):
     
     # Should return a calculation result dataclass instance
@@ -550,20 +688,42 @@ def calculate_absorbed_dose_to_site(
 
     else:
 
-        result_tmp_electrons = electron_dose_to_site(
-            site=site,
-            nuclide=nuclide,
-            source_tissue=calculation_input.get("source_tissue", ""),
-            mass_data=mass_data,
-            branching_ratio=branching_ratio
-        )
+        # TODO - here we need to handle when there are incompatible sites
+        # double check that this logic works as intended
+
+        if site.get("name", "") in ELECTRON_SURROGATES.keys():
+            surrogate_site_name = ELECTRON_SURROGATES[site.get("name", "")]
+            print(f"Using surrogate electron site {surrogate_site_name} for alpha site {site.get('name', '')}")
+            surrogate_site = site.copy()
+            surrogate_site["name"] = surrogate_site_name
+            calculation_results.surrogate_electron_site = surrogate_site_name
+            calculation_results.surrogate_electron_site_used = True
+
+            result_tmp_electrons = electron_dose_to_site(
+                site=surrogate_site,
+                nuclide=nuclide,
+                source_tissue=calculation_input.get("source_tissue", ""),
+                mass_data=mass_data,
+                branching_ratio=branching_ratio
+            )
+
+        else:
+
+            result_tmp_electrons = electron_dose_to_site(
+                site=site,
+                nuclide=nuclide,
+                source_tissue=calculation_input.get("source_tissue", ""),
+                mass_data=mass_data,
+                branching_ratio=branching_ratio
+            )
 
         result_tmp_alpha = alpha_dose_to_site(
             site=site,
             nuclide=nuclide,
             source_tissue=calculation_input.get("source_tissue", ""),
             mass_data=mass_data,
-            branching_ratio=branching_ratio
+            branching_ratio=branching_ratio,
+            rbe_alpha_value=rbe_alpha_value
         )
 
     # Populate the calculation results dataclass
@@ -585,6 +745,7 @@ def calculate_absorbed_dose_to_site(
     if not calculation_input.get("only_electron_calculation", False):
         if result_tmp_alpha is not None:
             calculation_results.absorbed_dose_Gy_alpha = result_tmp_alpha.get("absorbed_dose_Gy", 0)
+            calculation_results.absorbed_dose_Gy_alpha_rbe_adjusted = result_tmp_alpha.get("absorbed_dose_Gy_rbe_adjusted", 0)
             calculation_results.fraction_energy_absorbed_alpha = result_tmp_alpha.get("fraction_energy_absorbed", 0)
 
     return calculation_results
@@ -592,7 +753,8 @@ def calculate_absorbed_dose_to_site(
 def calculate_absorbed_dose_to_chain(
     site: dict,
     calculation_input,
-    mass_data
+    mass_data,
+    rbe_alpha_value: float = 1.0
 ):
     
     # Calculate the absorbed dose from the entire decay chain
@@ -602,7 +764,8 @@ def calculate_absorbed_dose_to_chain(
             site=site,
             nuclide=decay_chain_db.get_decay_info(calculation_input.get("radionuclide", "")),
             calculation_input=calculation_input,
-            mass_data=mass_data
+            mass_data=mass_data,
+            rbe_alpha_value=rbe_alpha_value
         )
     
     else:
@@ -625,7 +788,8 @@ def calculate_absorbed_dose_to_chain(
                     nuclide=daughter_nuclide,
                     calculation_input=calculation_input,
                     mass_data=mass_data,
-                    branching_ratio=branching_ratios.get(daughter, 1.0)
+                    branching_ratio=branching_ratios.get(daughter, None),
+                    rbe_alpha_value=rbe_alpha_value
                 )
 
                 combined_result.results.append(daughter_result)
@@ -639,10 +803,15 @@ def calculate_absorbed_dose_to_chain(
             nuclide=parent_nuclide,
             calculation_input=calculation_input,
             mass_data=mass_data,
-            branching_ratio=1.0
+            branching_ratio=1.0,
+            rbe_alpha_value=rbe_alpha_value
         )
 
         combined_result.results.append(parent_result)
+
+
+        # Adjust with RBE-value for alpha dose
+        # TODO - why is the comment above here?
 
         return combined_result
 
@@ -657,11 +826,16 @@ def calculate_absorbed_dose_from_input_data(
 
     nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
 
-    if nuclide.is_beta_emitter:
+    if nuclide.is_beta_emitter: # TODO IMPORTANT! This should not be done here, but deeper down the chain
 
         nuclide = replace_simple_beta_with_full_spectrum(nuclide)
 
     mass_data = mass_data_sites()
+
+    try :
+        rbe_alpha_value = float(calculation_input.get("alpha_RBE_value", 1.0))
+    except TypeError:
+        rbe_alpha_value = 1.0
 
     combined_results = CombinedCalculationResults()
 
@@ -670,7 +844,8 @@ def calculate_absorbed_dose_from_input_data(
         calc_result = calculate_absorbed_dose_to_chain(
             site=site,
             calculation_input=calculation_input,
-            mass_data=mass_data
+            mass_data=mass_data,
+            rbe_alpha_value=rbe_alpha_value
         )
 
         if isinstance(calc_result, CombinedCalculationResults):
@@ -678,7 +853,216 @@ def calculate_absorbed_dose_from_input_data(
         else:
             combined_results.results.append(calc_result)
 
+    combined_results.ordered_daughters = [calculation_input.get("radionuclide", "")] + list(calculation_input.get("daughters", {}).keys())
+
     return combined_results
+
+def post_process_back_end_inputs(input):
+
+    pros_fields = [f for f in input["fields"] if f["MBqhrs_per_ml"]]
+
+    input["fields"] = pros_fields
+    
+    for k, v in input.items():
+        print(f"{k}: {v}")
+
+    if len(pros_fields) == 0:
+        raise ValueError("No valid fields with cumulative activity concentration provided.")
+    
+    if not input["radionuclide"]:
+        raise ValueError("No radionuclide specified in input.")
+
+    # Check that the CF values are valid
+
+    for field in input["fields"]:
+        cf_value = field.get("CF", None)
+
+        if field.get("name", "") in ELECTRON_SURROGATES.keys():
+            print(f"Warning: Site {field.get('name', '')} is an alpha-only site. Using surrogate electron site {ELECTRON_SURROGATES[field.get('name', '')]}.")
+            field["CF"] = field.get("CF", None)  # Keep the same CF for surrogate site
+            continue
+        else:
+            if cf_value == str(ICRP_SKELETAL_SITE_VALUES_ELECTRONS[field.get("name", "")]):
+                field["CF"] = "icrp"
+                continue
+
+        if cf_value is None:
+            raise ValueError(f"Cellularity factor (CF) not specified for site {field.get('name', '')}.")
+        try:
+            cf_int = int(cf_value)
+            if (cf_int < 10 or cf_int > 100 or cf_int % 10 != 0):
+                raise ValueError(f"Cellularity factor (CF) for site {field.get('name', '')} must be between 10 and 100 in increments of 10.")
+        except ValueError:
+            raise ValueError(f"Cellularity factor (CF) for site {field.get('name', '')} must be an integer between 10 and 100 in increments of 10.")
+
+    nuclide = input["radionuclide"]
+    daughters = input["daughters"]
+    full_chain = [nuclide] + list(daughters.keys())
+
+    if nuclide not in SEVEN_FIELD_VALUES and not any(d not in SEVEN_FIELD_VALUES for d in daughters):
+        print("\nNote: Selected radionuclide is not an alpha emitter. No alpha-calculation needed.")
+        input["only_electron_calculation"] = True
+        return input
+    
+    else:
+        input["only_electron_calculation"] = False
+        # Now check if sites are compatible with alpha calculation
+
+        if "iliac_crest" in [f['name'] for f in input['fields'] if f['MBqhrs_per_ml']]:
+            print("Warning: 'iliac_crest' site is extra problematic")
+            input['incompatible_sites'] = ['iliac_crest']
+            input['sites_compatible'] = False
+            return input
+
+        sites = [f['name'] for f in input['fields'] if f['MBqhrs_per_ml']]
+
+        incompatible_sites = [s for s in sites if s not in SITES_BOTH_ALPHA_ELECTRON]
+
+        if len(incompatible_sites) > 0:
+            print("\nWarning: The following selected sites are incompatible with alpha and electron calculations ")
+            for s in incompatible_sites:
+                print(f" - {s}")
+            input['incompatible_sites'] = incompatible_sites
+            input['sites_compatible'] = False
+            return input
+
+        else:
+            input['sites_compatible'] = True
+            return input
+
+    return input
+
+def make_plot_figure(calc_results,
+                     plot_rbe_adjusted_alpha: bool = False):
+
+    df = pd.DataFrame(calc_results.prepare_rows_for_plotting())
+
+    ordered_daughters = calc_results.ordered_daughters
+    df = df.copy()
+    df['radionuclide'] = pd.Categorical(df['radionuclide'],
+                                        categories=ordered_daughters,
+                                        ordered=True)
+
+    df = df.sort_values(['site', 'radionuclide'])
+
+    # Check if there is only a single nuclide
+
+    if df['radionuclide'].nunique() == 1 and df["dose_alpha"].sum() == 0:
+        print("Only a single radionuclide present in results.")
+        generate_single_plot = True
+    else:
+        generate_single_plot = False
+
+    surrogate_axes = []
+
+    if generate_single_plot:
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        x = np.arange(len(df))
+
+        ax.bar(
+            x,
+            df['dose_electron'],
+            label='Electron AD'
+        )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(df['site'], rotation=45)
+        ax.set_title("Absorbed Dose per Site " + "(" + df['radionuclide'].iloc[0] + ")")
+        ax.set_ylabel('Absorbed Dose (Gy)')
+        ax.legend(frameon=False)
+
+        fig.tight_layout()
+
+        return fig
+
+    sites = df['site'].unique()
+
+    num_sites = len(sites)
+
+    sqrt_num_sites = math.sqrt(num_sites)
+
+    if sqrt_num_sites.is_integer():
+        ncols = int(sqrt_num_sites)
+    else:
+        ncols = int(sqrt_num_sites) + 1
+
+    fig, axes = plt.subplots(
+        nrows=math.ceil(num_sites / ncols),
+        ncols=ncols,
+        figsize=(5 * ncols, 4 * math.ceil(num_sites / ncols)),
+        sharey=True
+    )
+
+    alpha_dose_to_plot = "dose_alpha_rbe_adjusted" if plot_rbe_adjusted_alpha else "dose_alpha"
+
+    if len(sites) == 1:
+        axes = [axes]
+
+    for ax, site in zip(fig.get_axes(), sites):
+        site_df = df[df['site'] == site]
+
+        x = np.arange(len(site_df))
+
+        ax.bar(
+            x,
+            site_df[alpha_dose_to_plot],
+            label='Alpha AD'
+        )
+
+        if site_df['surrogate_electron_site_used'].any():
+
+            ax.bar(
+                x,
+                site_df['dose_electron'],
+                bottom=site_df[alpha_dose_to_plot],
+                label='Electron AD (surrogate)',
+                color='tab:gray'
+            )
+
+            surrogate_axes.append(ax)
+
+        else:
+
+            ax.bar(
+                x,
+                site_df['dose_electron'],
+                bottom=site_df[alpha_dose_to_plot],
+                label='Electron AD',
+            )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(site_df['radionuclide'], rotation=45)
+        ax.set_title(site)
+        ax.set_ylabel('Absorbed Dose (Gy)')
+
+    fig.get_axes()[0].legend(frameon=False)
+    fig.tight_layout()
+
+    if len(surrogate_axes) > 0:
+        for ax in surrogate_axes:
+            handles, labels = ax.get_legend_handles_labels()
+            new_handles = []
+            new_labels = []
+            for handle, label in zip(handles, labels):
+                if label not in new_labels:
+                    new_handles.append(handle)
+                    new_labels.append(label)
+            ax.legend(new_handles, new_labels, frameon=False)
+
+    return fig
+
+def build_calculation_report(
+        calc_results):
+    
+    report_body = ""
+
+    datetime = dt.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    return None
+    
+
+
 
 #calc_result = calculate_absorbed_dose_to_chain(
 #    site=corr_sites[0],
