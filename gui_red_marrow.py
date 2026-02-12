@@ -1,3 +1,35 @@
+class ToolTip:
+    """Create a tooltip for a given widget"""
+    def __init__(self, widget, text_func_or_str):
+        self.widget = widget
+        self.text_func_or_str = text_func_or_str
+        self.tipwindow = None
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def get_text(self):
+        if callable(self.text_func_or_str):
+            return self.text_func_or_str()
+        return self.text_func_or_str
+
+    def show_tip(self, event=None):
+        if self.tipwindow or not self.get_text():
+            return
+        x, y, _, cy = self.widget.bbox("insert") if hasattr(self.widget, "bbox") else (0,0,0,0)
+        x = x + self.widget.winfo_rootx() + 25
+        y = y + cy + self.widget.winfo_rooty() + 25
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        label = tk.Label(tw, text=self.get_text(), background="#ffffe0", relief="solid", borderwidth=1)
+        label.pack()
+
+    def hide_tip(self, event=None):
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
 import tkinter as tk
 from tkinter import ttk
 
@@ -24,6 +56,7 @@ from ashen.myelodose_backend import (
     CombinedCalculationResults,
     post_process_back_end_inputs,
     make_plot_figure,
+    check_for_warnings,
 )
 
 # --- Load predefined data -------------------------------------------------------
@@ -178,6 +211,39 @@ class CheckBoxWindow(tk.Toplevel):
 
 
 class DynamicFormApp(tk.Tk):
+    def show_warning_popup(self):
+        """
+        Show a custom Toplevel window with warnings and Proceed/Cancel buttons.
+        Returns True if user chooses to proceed, False if cancelled.
+        """
+        if not hasattr(self, 'warnings') or not self.warnings:
+            return True
+        warning_win = tk.Toplevel(self)
+        warning_win.title("Warning")
+        warning_win.geometry("400x250")
+        warning_win.transient(self)
+        warning_win.grab_set()
+        tk.Label(warning_win, text="Warnings detected:", font=("TkDefaultFont", 12, "bold"), fg="red").pack(pady=(15,5))
+        msg_frame = tk.Frame(warning_win)
+        msg_frame.pack(fill="both", expand=True, padx=10)
+        msg_box = tk.Text(msg_frame, wrap="word", height=8, width=45)
+        msg_box.insert("1.0", "\n".join(self.warnings))
+        msg_box.config(state="disabled", bg=warning_win.cget("bg"))
+        msg_box.pack(fill="both", expand=True)
+        btn_frame = tk.Frame(warning_win)
+        btn_frame.pack(pady=10)
+        result = {'proceed': False}
+        def proceed():
+            result['proceed'] = True
+            warning_win.destroy()
+        def cancel():
+            result['proceed'] = False
+            warning_win.destroy()
+        tk.Button(btn_frame, text="Proceed", command=proceed, width=12).pack(side="left", padx=12)
+        tk.Button(btn_frame, text="Cancel", command=cancel, width=12).pack(side="left", padx=12)
+        self.wait_window(warning_win)
+        return result['proceed']
+
     def __init__(self):
         super().__init__()
         self.title("Myelodose Beta")
@@ -185,10 +251,7 @@ class DynamicFormApp(tk.Tk):
         self.current_daughters = []  # Store daughters for selected nuclide
         self.checkbox_window = None  # Ensure checkbox_window is always defined
 
-        # ...existing code...
-
-        # ...existing code...
-
+        self.warnings = []  # Store warnings
 
         # Extra numerical input field
         num_frame = tk.Frame(self)
@@ -198,11 +261,29 @@ class DynamicFormApp(tk.Tk):
         self.alpha_RBE_entry = tk.Entry(num_frame, textvariable=self.alpha_RBE_var)
         self.alpha_RBE_entry.pack(side="left", padx=5)
 
+        # Example: Add a tooltip to the Alpha RBE entry
+        def rbe_tooltip_text():
+            val = self.alpha_RBE_var.get()
+            try:
+                v = float(val)
+                if v > 1.5:
+                    return f"Warning: High RBE value ({v})"
+                elif v < 0.5:
+                    return f"Warning: Low RBE value ({v})"
+                else:
+                    return f"Current RBE: {v} (normal range)"
+            except Exception:
+                return "Enter a numeric RBE value."
+        ToolTip(self.alpha_RBE_entry, rbe_tooltip_text)
+
         # Dropdown
         ttk.Label(self, text="Select or input radionuclide:").pack(anchor="w")
         self.combo = ttk.Combobox(self, values=PREDEFINED_VALUES)
         self.combo.bind("<<ComboboxSelected>>", self.on_nuclide_selected)
         self.combo.pack(fill="x", padx=5, pady=5)
+
+        # Example: Tooltip for radionuclide combobox, static text
+        ToolTip(self.combo, "Select a radionuclide. Choices affect available fields.")
 
 
         # Radio buttons
@@ -326,13 +407,23 @@ class DynamicFormApp(tk.Tk):
                 w['combo'].set("")
 
     def show_results_window(self):
-        # Ensure that calculation have been run and results are available
+        # Show warning popup before proceeding
+        #if hasattr(self, 'warnings') and self.warnings:
+        #    if not self.show_warning_popup():
+        #        print("Operation cancelled due to warnings.")
+        #        return
         results = self.run_calculation()
+        if results is None:
+            return
         rows = results.prepare_rows_for_plotting()
         ResultsWindow(self, rows, results)
 
     def save_to_file(self):
-        """Save current input data to a file."""
+        # Show warning popup before proceeding
+        if hasattr(self, 'warnings') and self.warnings:
+            if not self.show_warning_popup():
+                print("Save cancelled due to warnings.")
+                return
         inputs = self.collect_all_values()
         with open("saved_input.json", "w") as f:
             json.dump(inputs, f, indent=4)
@@ -482,16 +573,35 @@ class DynamicFormApp(tk.Tk):
     # --- calculation -------------------------------------------------------
 
     def run_calculation(self):
+
+        # Check if there are reasons for warning
+        
+        # DEBUG
+
         inputs = self.collect_all_values()
         inputs = post_process_back_end_inputs(inputs)
         calc_result = calculate_absorbed_dose_from_input_data(inputs)
+
+        # Function that takes in input and returns True if there are warnings to show, False if not
+
+        if DO_SAVE_JSON:
+            with open("debug_calc_result.json", "w") as f:
+                json.dump(self.collect_all_values(), f, indent=4)
+
+        self.warnings = check_for_warnings(calc_result)
+
+        # Show warning popup before proceeding
+        if hasattr(self, 'warnings') and self.warnings:
+            if not self.show_warning_popup():
+                print("Calculation cancelled due to warnings.")
+                return None
+
         if DO_SAVE_JSON:
             with open("calculation_input.json", "w") as f:
                 json.dump(inputs, f, indent=4)
             calc_result.save_to_json("new_output_results.json")
             print("\nCalculation input and results saved to JSON files.")
         return calc_result
-
 
 # --- Window for displaying the results --------------------------------------------
 
@@ -514,7 +624,7 @@ class ResultsWindow(tk.Toplevel):
 
         # Set a label explaining the asterisk
         if any(r.get("surrogate_electron_site_used", False) for r in rows) and any(r.get("electron_unity_saf_used", False) for r in rows):
-            tk.Label(self, text="* Unity SAF used for surrogate electron site calculation", font=("TkDefaultFont", 8, "italic")).pack()
+            tk.Label(self, text="* Unity AF used for surrogate electron site calculation", font=("TkDefaultFont", 8, "italic")).pack()
         elif any(r.get("electron_unity_saf_used", False) for r in rows):
             tk.Label(self, text="* Surrogate electron site used for dose calculation", font=("TkDefaultFont", 8, "italic")).pack()
         else:

@@ -719,6 +719,11 @@ def calculate_absorbed_dose_to_site(
         # TODO - here we need to handle when there are incompatible sites
         # double check that this logic works as intended
 
+        # Switch statement where one out three cases are handled:
+        # Case 1: Site is compatible with both alpha and electron dose calculation - calculate both as normal
+        # Case 2: Site is not compatible, and a surrogate is used
+        # Case 3: Site is not compatible, a surrogate is used, and the surrogate is calculated with unity SAF (for electrons)
+
         if site.get("name", "") in ELECTRON_SURROGATES.keys():
             surrogate_site_name = ELECTRON_SURROGATES[site.get("name", "")]
             print(f"Using surrogate electron site {surrogate_site_name} for alpha site {site.get('name', '')}")
@@ -728,7 +733,7 @@ def calculate_absorbed_dose_to_site(
             calculation_results.surrogate_electron_site_used = True
 
             if USE_UNITY_PHI_FOR_ELECTRON_SURROGATE:
-                print("Using unity SAF for surrogate electron site calculation.")
+                print("Using unity AF for surrogate electron site calculation.")
                 calculation_results.electron_unity_saf_used = True
 
             result_tmp_electrons = electron_dose_to_site(
@@ -768,6 +773,7 @@ def calculate_absorbed_dose_to_site(
     calculation_results.CF = site.get("CF", "")
 
     calculation_results.total_corrected_cumulative_activity_MBqhrs = site.get("total_corrected_cumulative_activity_MBqhrs", 0)
+
     calculation_results.only_electron_calculation = calculation_input.get("only_electron_calculation", False)
     calculation_results.sites_compatible = calculation_input.get("sites_compatible", True)
 
@@ -932,7 +938,7 @@ def post_process_back_end_inputs(input):
     daughters = input["daughters"]
     full_chain = [nuclide] + list(daughters.keys())
 
-    if nuclide not in SEVEN_FIELD_VALUES and not any(d not in SEVEN_FIELD_VALUES for d in daughters):
+    if all(d not in SEVEN_FIELD_VALUES for d in full_chain):
         print("\nNote: Selected radionuclide is not an alpha emitter. No alpha-calculation needed.")
         input["only_electron_calculation"] = True
         return input
@@ -1051,7 +1057,8 @@ def make_plot_figure(calc_results,
                     x,
                     site_df['dose_electron'],
                     bottom=site_df[alpha_dose_to_plot],
-                    label='Electron AD (unity SAF)',
+                    label='Electron AD (unity AF)',
+                    hatch='//',
                     color='tab:gray'
                 )
 
@@ -1097,6 +1104,23 @@ def make_plot_figure(calc_results,
             ax.legend(new_handles, new_labels, frameon=False)
 
     return fig
+
+def check_for_warnings(calc_result):
+
+    print("\nChecking for warnings with back-end-function...")
+    print(decay_chain_db.get_decay_info(calc_result.ordered_daughters[0]))
+    # TODO: Add the daughters when back
+    warnings = []
+
+    rows = calc_result.prepare_rows_for_plotting()
+
+    for row in rows:
+        if row.get("surrogate_electron_site_used", False) and row.get("electron_unity_saf_used", False):
+            total_ad = row["dose_alpha_rbe_adjusted"] + row["dose_electron"]
+            electron_fraction = row["dose_electron"] / total_ad if total_ad > 0 else 0
+            warnings.append(f"Surrogate electron site and unity SAF used for {row['site']} - check if this is appropriate. Electrons contribute {electron_fraction:.1%} of total absorbed dose.")
+
+    return warnings
 
 def build_calculation_report(
         calc_results):
