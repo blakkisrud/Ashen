@@ -25,7 +25,9 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from ashen.ashen_utils import (
     get_daughters,
     make_decay_chain_db,
-    load_icrp_107)
+    load_icrp_107,
+    convert_to_hours,
+    )
 
 from ashen.beta_spectrum_analysis import (
     replace_simple_beta_with_full_spectrum
@@ -116,6 +118,8 @@ else:
     with open("decay_chain_db.pkl", "rb") as f:
         decay_chain_db = pkl.load(f)
 
+CUT_OFF_DAUGHTER_HOURS = 2
+
 # Global dict with ICRP-values for skeletal sites
 
 ICRP_SKELETAL_SITE_VALUES_ELECTRONS = {
@@ -192,7 +196,8 @@ class CombinedCalculationResults:
                 "alpha_RBE_value": result.alpha_RBE_value,
                 "site": result.name,
                 "surrogate_electron_site_used": result.surrogate_electron_site_used,
-                "electron_unity_saf_used": result.electron_unity_saf_used
+                "electron_unity_saf_used": result.electron_unity_saf_used,
+                "parent_nuclide": result.parent_nuclide
             })
 
         return rows
@@ -396,62 +401,73 @@ def _saf_from_emission_data(emission_data,
 
     return saf_values
 
-def correct_cumulative_activity(sites, source_tissue):
+def correct_cumulative_activity(sites, source_tissue, input_units):
 
     errors = []
 
     mass_data = mass_data_sites()
 
     # TODO - Handle ICRP CF values here
+    # Handle the units of the cumulative activity concentration here as well
 
-    for site in sites:
-        print(f"Processing site: {site}")
-        cumulative_activity_conc = float(site.get("MBqhrs_per_ml", 0))
+    if input_units == "MBqhrs_per_ml":
 
-        cf_value = site.get("CF", None)
-        
-        if cf_value == "icrp":
-            cf_value = ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site.get("name", ""), None)/100.0
-        else:
-            cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
+        for site in sites:
+            print(f"Processing site: {site}")
+            cumulative_activity_conc = float(site.get("value", 0))
 
-        print(f"Cumulative activity concentration: {cumulative_activity_conc} MBq·hrs/ml")
-        print(f"Cellularity factor: {site.get('CF', 'N/A')}")
+            cf_value = site.get("CF", None)
 
-        spongiosa_volume = mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None)
+            if cf_value == "icrp":
+                cf_value = ICRP_SKELETAL_SITE_VALUES_ELECTRONS.get(site.get("name", ""), None)/100.0
+            else:
+                cf_value = float(site.get("CF", None))/100.0 if site.get("CF", None) is not None else None
 
-        if spongiosa_volume is None:
-            print(f"Error: Spongiosa volume data not found for site {site.get('name', '')}. Cannot correct cumulative activity.")
-            errors.append(f"Spongiosa volume data not found for site {site.get('name', '')}.")
-            continue
+            print(f"Cumulative activity concentration: {cumulative_activity_conc} MBq·hrs/ml")
+            print(f"Cellularity factor: {site.get('CF', 'N/A')}")
 
-        # Make a correction if source tissue is RM
+            spongiosa_volume = mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None)
 
-        if source_tissue == "RM":
-            print("Making correction for red marrow source tissue.")
-            tbv_fraction = mass_data.get(site.get("name", ""), {}).get("tbv_fraction", None)
-            marrow_fraction = (1 - tbv_fraction)*cf_value
-            marrow_mass = marrow_fraction*1.03 # Hacky - must place this value someplace else
-            corrected_cumulative_activity = cumulative_activity_conc/marrow_mass
-            print(f"Corrected cumulative activity concentration: {corrected_cumulative_activity} MBq·hrs/ml")
-            total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", None)
-            total_cumulative_activity = corrected_cumulative_activity * total_marrow_mass
+            if spongiosa_volume is None:
+                print(f"Error: Spongiosa volume data not found for site {site.get('name', '')}. Cannot correct cumulative activity.")
+                errors.append(f"Spongiosa volume data not found for site {site.get('name', '')}.")
+                continue
+
+            # Make a correction if source tissue is RM
+
+            if source_tissue == "RM":
+                print("Making correction for red marrow source tissue.")
+                tbv_fraction = mass_data.get(site.get("name", ""), {}).get("tbv_fraction", None)
+                marrow_fraction = (1 - tbv_fraction)*cf_value
+                marrow_mass = marrow_fraction*1.03 # Hacky - must place this value someplace else
+                corrected_cumulative_activity = cumulative_activity_conc/marrow_mass
+                print(f"Corrected cumulative activity concentration: {corrected_cumulative_activity} MBq·hrs/ml")
+                total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", None)
+                total_cumulative_activity = corrected_cumulative_activity * total_marrow_mass
+
+                print(f"Total cumulative activity in site: {total_cumulative_activity} MBq·hrs")
+
+            elif source_tissue == "TBS":
+                    print("Using total bone source tissue - no correction applied.")
+
+                    # Total trabecular bone source tissue
+                    total_cumulative_activity = cumulative_activity_conc*mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None) 
+
+                    #total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0)
 
             print(f"Total cumulative activity in site: {total_cumulative_activity} MBq·hrs")
 
-        elif source_tissue == "TBS":
-                print("Using total bone source tissue - no correction applied.")
+            site['total_corrected_cumulative_activity_MBqhrs'] = total_cumulative_activity
 
-                # Total trabecular bone source tissue
-                total_cumulative_activity = cumulative_activity_conc*mass_data.get(site.get("name", ""), {}).get("spongiosa_volume_ml", None) 
+        return sites
+    
+    if input_units == "MBqhrs":
 
-                #total_marrow_mass = mass_data.get(site.get("name", ""), {}).get("total_marrow_mass_g", 0)
+        for site in sites:
+            cumulative_activity = float(site.get("value", 0))
+            site['total_corrected_cumulative_activity_MBqhrs'] = cumulative_activity
 
-        print(f"Total cumulative activity in site: {total_cumulative_activity} MBq·hrs")
-
-        site['total_corrected_cumulative_activity_MBqhrs'] = total_cumulative_activity
-
-    return sites
+        return sites
 
 
 def _calculate_absorbed_dose_electron(corr_sites, 
@@ -861,7 +877,7 @@ def calculate_absorbed_dose_from_input_data(
     sites = calculation_input.get("fields", [])
     source_tissue = calculation_input.get("source_tissue", None)
 
-    corr_sites = correct_cumulative_activity(sites, source_tissue)
+    corr_sites = correct_cumulative_activity(sites, source_tissue, calculation_input.get("input_unit", None))
 
     nuclide = decay_chain_db.get_decay_info(calculation_input.get("radionuclide", ""))
 
@@ -898,7 +914,8 @@ def calculate_absorbed_dose_from_input_data(
 
 def post_process_back_end_inputs(input):
 
-    pros_fields = [f for f in input["fields"] if f["MBqhrs_per_ml"]]
+    #pros_fields = [f for f in input["fields"] if f["MBqhrs_per_ml"]]
+    pros_fields = [f for f in input["fields"] if f["value"]]
 
     input["fields"] = pros_fields
     
@@ -947,13 +964,13 @@ def post_process_back_end_inputs(input):
         input["only_electron_calculation"] = False
         # Now check if sites are compatible with alpha calculation
 
-        if "iliac_crest" in [f['name'] for f in input['fields'] if f['MBqhrs_per_ml']]:
+        if "iliac_crest" in [f['name'] for f in input['fields'] if f['value']]:
             print("Warning: 'iliac_crest' site is extra problematic")
             input['incompatible_sites'] = ['iliac_crest']
             input['sites_compatible'] = False
             return input
 
-        sites = [f['name'] for f in input['fields'] if f['MBqhrs_per_ml']]
+        sites = [f['name'] for f in input['fields'] if f['value']]
 
         incompatible_sites = [s for s in sites if s not in SITES_BOTH_ALPHA_ELECTRON]
 
@@ -1120,7 +1137,92 @@ def check_for_warnings(calc_result):
             electron_fraction = row["dose_electron"] / total_ad if total_ad > 0 else 0
             warnings.append(f"Surrogate electron site and unity SAF used for {row['site']} - check if this is appropriate. Electrons contribute {electron_fraction:.1%} of total absorbed dose.")
 
+    parent_nuclide = rows[0]['parent_nuclide'] if len(rows) > 0 else "N/A"
+
+    parent_nuclide_info = decay_chain_db.get_decay_info(parent_nuclide)
+
+
+    included_daughters = set()
+    included_daughters.add(parent_nuclide)
+
+    half_lives_of_daughters = decay_chain_db.get_half_lives_of_daughters(parent_nuclide)
+    half_lives_of_daughters[parent_nuclide] = parent_nuclide_info.halflife
+
+    for i in range(0, len(rows)):
+        daughter_nuclide = rows[i]["radionuclide"]
+        included_daughters.add(daughter_nuclide)
+
+    for daughter in included_daughters:
+        print(f"Daughter nuclide: {daughter}")
+
+    daughter_half_lives_hours = {}
+
+    for daughter in included_daughters:
+        half_life = half_lives_of_daughters.get(daughter, "Unknown")
+        half_life_hours = convert_to_hours(float(half_life[:-1]), half_life[-1])
+        daughter_half_lives_hours[daughter] = half_life_hours
+
+    print("\nDaughter nuclides and their half-lives in hours:")
+
+    parent_half_life_hours = daughter_half_lives_hours[parent_nuclide]
+
+    if parent_half_life_hours is not None:
+        for daughter in included_daughters:
+            daughter_half_life_hours = daughter_half_lives_hours.get(daughter)
+            if daughter_half_life_hours is not None and daughter_half_life_hours > parent_half_life_hours:
+                print(f"Warning: Daughter nuclide {daughter} has a longer half-life ({daughter_half_life_hours:.20f} hours) than the parent nuclide ({parent_half_life_hours:.20f} hours). This may affect the accuracy of the dose calculations.")
+
+    # Check if any daughters have half life above cutoff of some set value
+
+    for daughter in included_daughters:
+        daughter_half_life_hours = daughter_half_lives_hours.get(daughter)
+        if daughter_half_life_hours is not None and daughter_half_life_hours > CUT_OFF_DAUGHTER_HOURS:
+            if daughter != parent_nuclide:
+                warnings.append(f"Warning: Daughter nuclide {daughter} has a half-life of {daughter_half_life_hours:.2f} hours, which exceeds the cutoff of {CUT_OFF_DAUGHTER_HOURS} hours. Carefully consider this daughter in the calculation.")
+
+    #other_radiation_type_warnings = []
+
+    for daughter in included_daughters:
+        daughter_info = decay_chain_db.get_decay_info(daughter)
+        if daughter_info is not None:
+            #warnings.append(check_non_electron_or_alpha_energies(daughter_info))
+            # Concatenate lists instead
+            warnings = warnings + check_non_electron_or_alpha_energies(daughter_info)
+
     return warnings
+
+def check_non_electron_or_alpha_energies(nuclide, warning_threshold = 0.001):
+
+    non_electron_alpha_energy_warnings = []
+
+    emission_energies = {}
+    emission_energies_included_parties = {}
+
+    for em in nuclide.emissions:
+        if em.radiation_type not in ["A", "B-", "IE", "AR", "AE"] and em.energy > 0:
+            if em.radiation_type not in emission_energies.keys():
+                emission_energies[em.radiation_type] = 0
+            energy_emitted = em.energy*em.yield_fraction
+            emission_energies[em.radiation_type] += energy_emitted
+
+        if em.radiation_type in ["A", "B-", "IE", "AE"] and em.energy > 0:
+            if em.radiation_type not in emission_energies_included_parties.keys():
+                emission_energies_included_parties[em.radiation_type] = 0
+            energy_emitted = em.energy*em.yield_fraction
+            emission_energies_included_parties[em.radiation_type] += energy_emitted
+
+    print(f"Nuclide: {nuclide.name}, Emission energies: {emission_energies}")
+
+    # Fraction of energy from non-electron and non-alpha emissions compared to total energy from all emissions
+
+    total_energy = sum(emission_energies_included_parties.values()) + sum(emission_energies.values())
+
+    for key in emission_energies.keys():
+        energy_fraction = emission_energies[key] / total_energy
+        if energy_fraction > warning_threshold:
+            non_electron_alpha_energy_warnings.append(f"Warning: {key} emissions contribute {energy_fraction:.2%} of the total energy emitted for nuclide {nuclide.name}, which exceeds the threshold of {warning_threshold:.2%}. Consider this in the absorbed dose calculations.")
+
+    return non_electron_alpha_energy_warnings
 
 def build_calculation_report(
         calc_results):

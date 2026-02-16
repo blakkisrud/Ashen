@@ -285,7 +285,6 @@ class DynamicFormApp(tk.Tk):
         # Example: Tooltip for radionuclide combobox, static text
         ToolTip(self.combo, "Select a radionuclide. Choices affect available fields.")
 
-
         # Radio buttons
         self.radio_choice = tk.StringVar(value="RM")
         rad_frame = tk.Frame(self)
@@ -371,13 +370,14 @@ class DynamicFormApp(tk.Tk):
         self.image_label = tk.Label(self.vtk_frame, image=self.current_image)
         self.image_label.pack(fill="both", expand=True)
 
+        # Input unit selection (radio buttons) will be placed inside the form area
+        self.input_unit = tk.StringVar(value="MBqhrs_per_ml")  # Default unit
 
-        # Create both forms
-        self.form_13, self.widgets_13 = self.create_form(13, ELECTRON_SITES)
-        self.form_7, self.widgets_7 = self.create_form(7, ALPHA_SITES)
+        # Create both forms (radio buttons will be inside)
+        self.form_13, self.widgets_13, self.input_label_13 = self.create_form(13, ELECTRON_SITES)
+        self.form_7, self.widgets_7, self.input_label_7 = self.create_form(7, ALPHA_SITES)
 
         self.active_widgets = self.widgets_13
-        #self.update_image()
 
         # Buttons (create only once)
         btn_frame = tk.Frame(self)
@@ -443,16 +443,24 @@ class DynamicFormApp(tk.Tk):
         widgets = []
         dropdown_vals = [str(v) for v in range(10, 110, 10)]
 
-        # Add headers above input and combo columns
-        tk.Label(frame, text="MBq*hrs/ml", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=1, sticky="ew", padx=5, pady=(0, 2))
-        tk.Label(frame, text="Cellularity factor", font=("TkDefaultFont", 10, "bold")).grid(row=0, column=2, sticky="ew", padx=5, pady=(0, 2))
+        # Input unit radio buttons above the labels
+        unit_frame = tk.Frame(frame)
+        unit_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 2))
+        tk.Label(unit_frame, text="Input unit:").pack(side="left", padx=(0, 5))
+        tk.Radiobutton(unit_frame, text="Total Activity (total_act)", variable=self.input_unit, value="MBqhrs").pack(side="left")
+        tk.Radiobutton(unit_frame, text="Concentration (conc_act)", variable=self.input_unit, value="MBqhrs_per_ml").pack(side="left")
+
+        # Add headers above input and combo columns, update label based on unit
+        input_label = tk.Label(frame, text=self.get_input_label_text(), font=("TkDefaultFont", 10, "bold"))
+        input_label.grid(row=1, column=1, sticky="ew", padx=5, pady=(0, 2))
+        tk.Label(frame, text="Cellularity factor", font=("TkDefaultFont", 10, "bold")).grid(row=1, column=2, sticky="ew", padx=5, pady=(0, 2))
 
         for i in range(n):
-            row = i + 1
+            row = i + 2
             if field_names and i < len(field_names):
                 label_text = field_names[i]
             else:
-                label_text = f"Field {row}:"
+                label_text = f"Field {row - 1}:"
 
             tk.Label(frame, text=label_text).grid(row=row, column=0, sticky="w")
 
@@ -470,7 +478,14 @@ class DynamicFormApp(tk.Tk):
 
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=1)
-        return frame, widgets
+        return frame, widgets, input_label
+
+    def get_input_label_text(self):
+        unit = self.input_unit.get()
+        if unit == "total_act":
+            return "MBq*hrs (total activity)"
+        else:
+            return "MBq*hrs/ml (concentration)"
 
     # --- dynamic form switching -------------------------------------------
 
@@ -489,6 +504,12 @@ class DynamicFormApp(tk.Tk):
                 w['btn'].grid_remove()
         else:
             self.active_widgets = self.widgets_13
+
+            # Update both input labels when unit changes
+            def update_input_labels(*args):
+                self.input_label_13.config(text=self.get_input_label_text())
+                self.input_label_7.config(text=self.get_input_label_text())
+            self.input_unit.trace_add('write', update_input_labels)
             self.show_form(self.form_13)
             # Show ICRP CF buttons for 13-field nuclides
             for w in self.widgets_13:
@@ -529,6 +550,7 @@ class DynamicFormApp(tk.Tk):
         """Returns ALL user inputs as a dictionary."""
         data = {}
 
+
         # Extra numerical value
         try:
             data["alpha_RBE_value"] = float(self.alpha_RBE_var.get())
@@ -541,12 +563,15 @@ class DynamicFormApp(tk.Tk):
         # Radio choice
         data["source_tissue"] = self.radio_choice.get()
 
+        # Input unit
+        data["input_unit"] = self.input_unit.get()
+
         # Dynamic form entries
         form_data = []
         for w in self.active_widgets:
             form_data.append({
                 "name": w['name'],
-                "MBqhrs_per_ml": w['entry'].get(),
+                "value": w['entry'].get(),
                 "CF": w['combo'].get(),
             })
         data["fields"] = form_data
