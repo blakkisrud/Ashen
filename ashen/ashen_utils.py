@@ -1,15 +1,10 @@
 """
 
-Main source file for shared functions
+Main source file for shared functions that are used 
+across in the package
 
-"""
-
-"""
-
-Support functions to retreive the half life from a file from ICRP 107
-
-Script can also contain the loading of different radinuclide data and 
-characteristics
+Update when moving myelodose out of the ashen package
+Third update, because I am an idiot
 
 """
 
