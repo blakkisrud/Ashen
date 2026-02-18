@@ -272,6 +272,87 @@ for nuclide in PREDEFINED_VALUES:
     for da in daughters:
         CHECKBOX_VALUES[da] = daughters[da]
 
+# Make the site data
+
+# Field name lists for forms
+ELECTRON_SITES = [
+    "craniofacial_bones",
+    "mandible",
+    "scapulae",
+    "clavicles",
+    "sternum",
+    "ribs",
+    "cervical_vertebrae",
+    "thoracic_vertebrae",
+    "lumbar_vertebrae",
+    "sacrum",
+    "os_coxae",
+    "proximal_humeri",
+    "proximal_femora",
+]
+ALPHA_SITES = [
+    "cervical_vertebrae",
+    "femur_head",
+    "femur_neck",
+    "iliac_crest",
+    "lumbar_vertebrae",
+    "ribs",
+    "parietal_bone"
+]
+# Super-list: all unique fields, preserving order (ELECTRON_SITES first, then any ALPHA_SITES not already present)
+SUPER_SITES = ELECTRON_SITES + [site for site in ALPHA_SITES if site not in ELECTRON_SITES]
+
+# Default CF-values
+
+DEFAULT_VALUES_13 = {
+    "craniofacial_bones": 38,
+    "mandible": 38,
+    "scapulae": 38,
+    "clavicles": 33,
+    "sternum": 70,
+    "ribs": 70,
+    "cervical_vertebrae": 70,
+    "thoracic_vertebrae": 70,
+    "lumbar_vertebrae": 70,
+    "sacrum": 70,
+    "os_coxae": 48,
+    "proximal_humeri": 25,
+    "proximal_femora": 25,
+}
+
+DEFAULT_VALUES_7 = {
+    "cervical_vertebrae": None,
+    "femur_head": None,
+    "femur_neck": None,
+    "iliac_crest": None,
+    "lumbar_vertebrae": None,
+    "ribs": None,
+    "parietal_bone": None,
+}
+
+# Example: Default CF values for 7-input fields
+CF_DEFAULTS_7 = {
+    "cervical_vertebrae": "70",
+    "femur_head": "40",
+    "femur_neck": "20",
+    "iliac_crest": "50",
+    "lumbar_vertebrae": "70",
+    "ribs": "70",
+    "parietal_bone": "40",
+}
+
+# Subset of 7-input fields for which to show warning
+CF_WARNING_FIELDS = ["parietal_bone", 
+                     "femur_head", 
+                     "femur_neck", 
+                     "iliac_crest"]  # For these, a rounding has been done
+
+ELECTRON_SURROGATES= {
+    "femur_head": "proximal_femora",
+    "femur_neck": "proximal_femora",
+    "iliac_crest": "os_coxae",
+    "parietal_bone": "craniofacial_bones"
+}
 
 # Write both dicts into a single JSON object
 with open("predefined_data.json", "w") as f:
@@ -279,10 +360,18 @@ with open("predefined_data.json", "w") as f:
         "CHECKBOX_VALUES": CHECKBOX_VALUES,
         "CHECKBOX_TITLES": CHECKBOX_TITLES,
         "SEVEN_FIELD_VALUES": SEVEN_FIELD_VALUES,
-        "PREDEFINED_VALUES": PREDEFINED_VALUES
+        "PREDEFINED_VALUES": PREDEFINED_VALUES,
+        "ELECTRON_SITES": ELECTRON_SITES,
+        "ALPHA_SITES": ALPHA_SITES,
+        "SUPER_SITES": SUPER_SITES,
+        "DEFAULT_VALUES_13": DEFAULT_VALUES_13,
+        "DEFAULT_VALUES_7": DEFAULT_VALUES_7,
+        "CF_DEFAULTS_7": CF_DEFAULTS_7,
+        "CF_WARNING_FIELDS": CF_WARNING_FIELDS,
+        "ELECTRON_SURROGATES": ELECTRON_SURROGATES
     }, f, indent=4)
 
-make_alpha_saf_yaml()
+#make_alpha_saf_yaml()
 
 sys.exit()
 

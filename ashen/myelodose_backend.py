@@ -51,51 +51,28 @@ with open("predefined_data.json", "r") as f:
 PREDEFINED_VALUES = list(json_data.get("CHECKBOX_TITLES", {}).keys())
 SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alpha-emitters with 7 fields
 
-# Field name lists for forms
-#ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
-
-ELECTRON_SITES = [
-        "craniofacial_bones",
-        "mandible",
-        "scapulae",
-        "clavicles",
-        "sternum",
-        "ribs",
-        "cervical_vertebrae",
-        "thoracic_vertebrae",
-        "lumbar_vertebrae",
-        "sacrum",
-        "os_coxae",
-        "proximal_humeri",
-        "proximal_femora",
-]
-
-ALPHA_SITES = [
-        "cervical_vertebrae",
-        "femur_head",
-        "femur_neck",
-        "iliac_crest",
-        "lumbar_vertebrae",
-        "ribs",
-        "parietal_bone"
-]
-
+ELECTRON_SITES = json_data.get("ELECTRON_SITES", [])
+ALPHA_SITES = json_data.get("ALPHA_SITES", [])
 SITES_BOTH_ALPHA_ELECTRON = list(set(ELECTRON_SITES) & set(ALPHA_SITES))
+ELECTRON_SURROGATES = json_data.get("ELECTRON_SURROGATES", {}) # These are the surrogate sites for electrons when calculating alpha dose for sites without electron SAF data
 
-ELECTRON_SURROGATES= {
-    "femur_head": "proximal_femora",
-    "femur_neck": "proximal_femora",
-    "iliac_crest": "os_coxae",
-    "parietal_bone": "craniofacial_bones"
-}
+# --- Settings from yaml ------------------------------------------------------
 
+deep_settings = {}
+with open("DEEP_SETTINGS.yaml", "r") as f:
+    yaml_data = yaml.safe_load(f)
+    deep_settings.update(yaml_data)
 
+print("Settings loaded from DEEP_SETTINGS.yaml:", deep_settings)
+
+CUT_OFF_DAUGHTER_HOURS = deep_settings.get("CUT_OFF_DAUGHTER_HOURS", 2)
+NON_ALPHA_ELECTRON_FRACTION_WARNING_THRESHOLD = deep_settings.get("NON_ALPHA_ELECTRON_FRACTION_WARNING_THRESHOLD", 0.01)
+REMAKE_DB = deep_settings.get("REMAKE_DB", False)
+USE_UNITY_PHI_FOR_ELECTRON_SURROGATE = deep_settings.get("USE_UNITY_PHI_FOR_ELECTRON_SURROGATE", True)
 
 # -- Flags ---------------------------------------------------------------
 
-REMAKE_DB = False
 SILENCE_WARNING = True
-USE_UNITY_PHI_FOR_ELECTRON_SURROGATE = True
 
 with open("combined_saf.yaml", "r") as f:
     SKELETAL_SITE_DATA_ELECTRONS = yaml.safe_load(f)
@@ -118,7 +95,7 @@ else:
     with open("decay_chain_db.pkl", "rb") as f:
         decay_chain_db = pkl.load(f)
 
-CUT_OFF_DAUGHTER_HOURS = 2
+
 
 # Global dict with ICRP-values for skeletal sites
 
@@ -522,7 +499,7 @@ def _calculate_absorbed_dose_electron(corr_sites,
 
     return corr_sites
 
-def calculate_absorbed_dose_alpha(corr_sites,
+def _calculate_absorbed_dose_alpha(corr_sites,
                                   source_tissue: str,
                                   nuclide,
                                   calculation_input,
@@ -1191,7 +1168,7 @@ def check_for_warnings(calc_result):
 
     return warnings
 
-def check_non_electron_or_alpha_energies(nuclide, warning_threshold = 0.001):
+def check_non_electron_or_alpha_energies(nuclide, warning_threshold = NON_ALPHA_ELECTRON_FRACTION_WARNING_THRESHOLD):
 
     non_electron_alpha_energy_warnings = []
 
@@ -1238,9 +1215,6 @@ def build_calculation_report(
     
     return None
     
-
-
-
 #calc_result = calculate_absorbed_dose_to_chain(
 #    site=corr_sites[0],
 #    calculation_input=calculation_input,

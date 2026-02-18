@@ -1,19 +1,41 @@
-# Subset of 7-input fields for which to show warning
-CF_WARNING_FIELDS = ["parietal_bone", 
-                     "femur_head", 
-                     "femur_neck", 
-                     "iliac_crest"]  # For these, a rounding has been done
 
-# Example: Default CF values for 7-input fields
-CF_DEFAULTS_7 = {
-    "cervical_vertebrae": "70",
-    "femur_head": "40",
-    "femur_neck": "20",
-    "iliac_crest": "50",
-    "lumbar_vertebrae": "70",
-    "ribs": "70",
-    "parietal_bone": "40",
-}
+
+import tkinter as tk
+from tkinter import ttk
+
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+
+import json
+import nibabel as nib
+import numpy as np
+import vtk
+import yaml
+
+from vtk.util import numpy_support  
+from PIL import Image, ImageTk
+from collections import defaultdict
+
+from enum import Enum
+
+import pandas as pd
+
+from ashen.ashen_utils import (
+    convert_to_hours
+)
+
+from ashen.myelodose_backend import (
+    calculate_absorbed_dose_from_input_data,
+    CombinedCalculationResults,
+    post_process_back_end_inputs,
+    make_plot_figure,
+    check_for_warnings,
+)
+
+class InputUnit(str, Enum):
+    TOTAL_ACTIVITY = "MBqhrs"
+    CONCENTRATION = "MBqhrs_per_ml"
+
 class ToolTip:
     """Create a tooltip for a given widget"""
     def __init__(self, widget, text_func_or_str):
@@ -46,42 +68,6 @@ class ToolTip:
         if tw:
             tw.destroy()
 
-import tkinter as tk
-from tkinter import ttk
-
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-
-import json
-import nibabel as nib
-import numpy as np
-import vtk
-
-from vtk.util import numpy_support  
-from PIL import Image, ImageTk
-from collections import defaultdict
-
-from enum import Enum
-
-import pandas as pd
-
-from ashen.ashen_utils import (
-    convert_to_hours
-)
-
-from ashen.myelodose_backend import (
-    calculate_absorbed_dose_from_input_data,
-    CombinedCalculationResults,
-    post_process_back_end_inputs,
-    make_plot_figure,
-    check_for_warnings,
-)
-
-class InputUnit(str, Enum):
-    TOTAL_ACTIVITY = "MBqhrs"
-    CONCENTRATION = "MBqhrs_per_ml"
-
-
 # --- Load predefined data -------------------------------------------------------
 
 # Read json file for checkbox data
@@ -91,78 +77,30 @@ with open("predefined_data.json", "r") as f:
 
 # --- Simulated data -------------------------------------------------------------
 
-#SEVEN_FIELD_VALUES = ["Ac-225", "Pb-212", "At-211"]
-#PREDEFINED_VALUES = ["Lu-177", "Y-90", "I-131"]
-#PREDEFINED_VALUES += list(SEVEN_FIELD_VALUES)
-
 # --- Real data ---------------------------------------------------------------
 
 PREDEFINED_VALUES = list(json_data.get("CHECKBOX_TITLES", {}).keys())
 SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alpha-emitters with 7 fields
-
-
-
-# Field name lists for forms
-ELECTRON_SITES = [
-    "craniofacial_bones",
-    "mandible",
-    "scapulae",
-    "clavicles",
-    "sternum",
-    "ribs",
-    "cervical_vertebrae",
-    "thoracic_vertebrae",
-    "lumbar_vertebrae",
-    "sacrum",
-    "os_coxae",
-    "proximal_humeri",
-    "proximal_femora",
-]
-ALPHA_SITES = [
-    "cervical_vertebrae",
-    "femur_head",
-    "femur_neck",
-    "iliac_crest",
-    "lumbar_vertebrae",
-    "ribs",
-    "parietal_bone"
-]
-# Super-list: all unique fields, preserving order (ELECTRON_SITES first, then any ALPHA_SITES not already present)
-SUPER_SITES = ELECTRON_SITES + [site for site in ALPHA_SITES if site not in ELECTRON_SITES]
-
-DEFAULT_VALUES_13 = {
-    "craniofacial_bones": 38,
-    "mandible": 38,
-    "scapulae": 38,
-    "clavicles": 33,
-    "sternum": 70,
-    "ribs": 70,
-    "cervical_vertebrae": 70,
-    "thoracic_vertebrae": 70,
-    "lumbar_vertebrae": 70,
-    "sacrum": 70,
-    "os_coxae": 48,
-    "proximal_humeri": 25,
-    "proximal_femora": 25,
-}
-
-DEFAULT_VALUES_7 = {
-    "cervical_vertebrae": None,
-    "femur_head": None,
-    "femur_neck": None,
-    "iliac_crest": None,
-    "lumbar_vertebrae": None,
-    "ribs": None,
-    "parietal_bone": None,
-}
-
-
+ELECTRON_SITES = json_data.get("ELECTRON_SITES", [])
+ALPHA_SITES = json_data.get("ALPHA_SITES", [])
+SUPER_SITES = json_data.get("SUPER_SITES", [])
+DEFAULT_VALUES_13 = json_data.get("DEFAULT_VALUES_13", {})
+DEFAULT_VALUES_7 = json_data.get("DEFAULT_VALUES_7", {})
+CF_DEFAULTS_7 = json_data.get("CF_DEFAULTS_7", {})
 CHECKBOX_TITLES = json_data.get("CHECKBOX_TITLES", {})
-# Mapping from checkbox title to value to display
+CF_WARNING_FIELDS = json_data.get("CF_WARNING_FIELDS", [])
 CHECKBOX_VALUES = json_data.get("CHECKBOX_VALUES", {})
 
-DO_SAVE_JSON = True
+# --- Settings from yaml ------------------------------------------------------
 
+settings = {}
+with open("DEEP_SETTINGS.yaml", "r") as f:
+    yaml_data = yaml.safe_load(f)
+    settings.update(yaml_data)
+
+print("Settings loaded from DEEP_SETTINGS.yaml:", settings)
+
+DO_SAVE_JSON = settings.get("DO_SAVE_JSON", False)
 
 # --- Checkbox window class ------------------------------------------------------
 
@@ -270,7 +208,7 @@ class DynamicFormApp(tk.Tk):
 
         super().__init__()
         self.title("Myelodose Beta")
-        self.geometry("900x900")
+        self.geometry("1000x1000")
         self.current_daughters = []  # Store daughters for selected nuclide
         
         # Warning label for ICRP CF button presses
@@ -312,7 +250,7 @@ class DynamicFormApp(tk.Tk):
         self.combo.pack(fill="x", padx=5, pady=5)
 
         # Example of a tooltip: Tooltip for radionuclide combobox, static text
-        ToolTip(self.combo, "Select a radionuclide. Choices affect available fields.")
+        #ToolTip(self.combo, "Select a radionuclide. Choices affect available fields.")
 
         # Radio buttons
         self.radio_choice = tk.StringVar(value="RM")
@@ -564,6 +502,7 @@ class DynamicFormApp(tk.Tk):
 
     def update_form(self, event=None):
         val = self.combo.get()
+        print(f"Selected radionuclide: {val}")
         enabled_fields = []
         if val in SEVEN_FIELD_VALUES:
             # Enable only the 7 relevant fields, disable the rest (including button)
@@ -603,10 +542,6 @@ class DynamicFormApp(tk.Tk):
             return DEFAULT_VALUES_7
         else:
             return DEFAULT_VALUES_13
-
-    def apply_default(self, entry, row):
-        # Deprecated: No longer used for entry fields
-        pass
 
     def apply_default_combo(self, combo, name):
         defaults = self.get_default_dict()
@@ -689,13 +624,10 @@ class DynamicFormApp(tk.Tk):
     def run_calculation(self):
 
         # Check if there are reasons for warning
-        
 
         inputs = self.collect_all_values()
         inputs = post_process_back_end_inputs(inputs)
         calc_result = calculate_absorbed_dose_from_input_data(inputs)
-
-        # Function that takes in input and returns True if there are warnings to show, False if not
 
         if DO_SAVE_JSON:
             with open("debug_calc_result.json", "w") as f:
