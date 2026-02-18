@@ -8,7 +8,7 @@ This was mostly made as a pet project in accociation with absorbed dose calculat
 
 This is still under development and contributions are welcome, please make a pull request or open an issue if you have any suggestions or improvements.
 
-https://img.shields.io/badge/ashen-v0.1.3-blue
+https://img.shields.io/badge/ashen-v0.1.7-blue
 
 ## Features
 
@@ -28,7 +28,7 @@ https://img.shields.io/badge/ashen-v0.1.3-blue
 
 Clone the repository and install the required dependencies:
 ```bash
-pip install git+https://github.com/blakkisrud/ashen.git@v0.1.1
+pip install git+https://github.com/blakkisrud/ashen.git@v0.1.7
 ```
 
 ## Usage
@@ -89,4 +89,5 @@ Ashen is licensed under the MIT License. See the LICENSE file for more informati
 
 - 0.1.0 - Initial release with basic functionality and command line tool.
 - 0.1.1 - Fix some small typoes
+- 0.1.7 - Migration from a separate branch
 
