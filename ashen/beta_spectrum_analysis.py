@@ -5,6 +5,7 @@ Functions to calculate the yield from beta-emitting radionuclides.
 This is needed as the group in Gothenburg have used full spectrum beta data
 and we need to be able to compare our results to theirs.
 
+Update when moving myelodose out of the ashen package
 
 
 """
