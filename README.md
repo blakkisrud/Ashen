@@ -8,7 +8,7 @@ This was mostly made as a pet project in accociation with absorbed dose calculat
 
 This is still under development and contributions are welcome, please make a pull request or open an issue if you have any suggestions or improvements.
 
-https://img.shields.io/badge/ashen-v0.0.2-blue
+https://img.shields.io/badge/ashen-v0.1.3-blue
 
 ## Features
 
