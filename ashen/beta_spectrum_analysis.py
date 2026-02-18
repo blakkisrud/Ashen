@@ -17,10 +17,10 @@ from dataclasses import dataclass
 import pandas as pd
 import sys
 from ashen.ashen_utils import load_icrp_107, make_decay_chain_db, get_daughters, Nuclide, RadiationEmission
-import seaborn as sns
 import pickle
+from pathlib import Path
 
-PATH_TO_BETA_FILES = 'ashen/resources/ICRP-07.BET'
+PATH_TO_BETA_FILES = Path(__file__).parent / 'resources' / 'ICRP-07.BET'
 
 def extract_data(filename, keyword) -> pd.DataFrame:
     with open(filename, 'r') as f:

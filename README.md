@@ -8,7 +8,7 @@ This was mostly made as a pet project in accociation with absorbed dose calculat
 
 This is still under development and contributions are welcome, please make a pull request or open an issue if you have any suggestions or improvements.
 
-https://img.shields.io/badge/ashen-v0.1.7-blue
+https://img.shields.io/badge/ashen-v1.1.8-blue
 
 ## Features
 
@@ -28,7 +28,7 @@ https://img.shields.io/badge/ashen-v0.1.7-blue
 
 Clone the repository and install the required dependencies:
 ```bash
-pip install git+https://github.com/blakkisrud/ashen.git@v0.1.7
+pip install git+https://github.com/blakkisrud/ashen.git@v1.1.8
 ```
 
 ## Usage
