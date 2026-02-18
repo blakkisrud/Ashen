@@ -1224,6 +1224,11 @@ def check_non_electron_or_alpha_energies(nuclide, warning_threshold = 0.001):
 
     return non_electron_alpha_energy_warnings
 
+def check_cf_values(calculation_results):
+    cf_warnings = []
+
+    return cf_warnings
+
 def build_calculation_report(
         calc_results):
     

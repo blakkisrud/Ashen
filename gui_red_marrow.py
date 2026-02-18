@@ -1,3 +1,19 @@
+# Subset of 7-input fields for which to show warning
+CF_WARNING_FIELDS = ["parietal_bone", 
+                     "femur_head", 
+                     "femur_neck", 
+                     "iliac_crest"]  # For these, a rounding has been done
+
+# Example: Default CF values for 7-input fields
+CF_DEFAULTS_7 = {
+    "cervical_vertebrae": "70",
+    "femur_head": "40",
+    "femur_neck": "20",
+    "iliac_crest": "50",
+    "lumbar_vertebrae": "70",
+    "ribs": "70",
+    "parietal_bone": "40",
+}
 class ToolTip:
     """Create a tooltip for a given widget"""
     def __init__(self, widget, text_func_or_str):
@@ -45,6 +61,8 @@ from vtk.util import numpy_support
 from PIL import Image, ImageTk
 from collections import defaultdict
 
+from enum import Enum
+
 import pandas as pd
 
 from ashen.ashen_utils import (
@@ -58,6 +76,11 @@ from ashen.myelodose_backend import (
     make_plot_figure,
     check_for_warnings,
 )
+
+class InputUnit(str, Enum):
+    TOTAL_ACTIVITY = "MBqhrs"
+    CONCENTRATION = "MBqhrs_per_ml"
+
 
 # --- Load predefined data -------------------------------------------------------
 
@@ -78,36 +101,34 @@ PREDEFINED_VALUES = list(json_data.get("CHECKBOX_TITLES", {}).keys())
 SEVEN_FIELD_VALUES = json_data.get("SEVEN_FIELD_VALUES", []) # These are the alpha-emitters with 7 fields
 
 
+
 # Field name lists for forms
-#ELECTRON_SITES = [f"Site_electrons_{i}" for i in range(1, 14)]
-
 ELECTRON_SITES = [
-        "craniofacial_bones",
-        "mandible",
-        "scapulae",
-        "clavicles",
-        "sternum",
-        "ribs",
-        "cervical_vertebrae",
-        "thoracic_vertebrae",
-        "lumbar_vertebrae",
-        "sacrum",
-        "os_coxae",
-        "proximal_humeri",
-        "proximal_femora",
+    "craniofacial_bones",
+    "mandible",
+    "scapulae",
+    "clavicles",
+    "sternum",
+    "ribs",
+    "cervical_vertebrae",
+    "thoracic_vertebrae",
+    "lumbar_vertebrae",
+    "sacrum",
+    "os_coxae",
+    "proximal_humeri",
+    "proximal_femora",
 ]
-
 ALPHA_SITES = [
-        "cervical_vertebrae",
-        "femur_head",
-        "femur_neck",
-        "iliac_crest",
-        "lumbar_vertebrae",
-        "ribs",
-        "parietal_bone"
+    "cervical_vertebrae",
+    "femur_head",
+    "femur_neck",
+    "iliac_crest",
+    "lumbar_vertebrae",
+    "ribs",
+    "parietal_bone"
 ]
-
-SITES_BOTH_ALPHA_ELECTRON = list(set(ELECTRON_SITES) & set(ALPHA_SITES))
+# Super-list: all unique fields, preserving order (ELECTRON_SITES first, then any ALPHA_SITES not already present)
+SUPER_SITES = ELECTRON_SITES + [site for site in ALPHA_SITES if site not in ELECTRON_SITES]
 
 DEFAULT_VALUES_13 = {
     "craniofacial_bones": 38,
@@ -211,6 +232,7 @@ class CheckBoxWindow(tk.Toplevel):
 
 
 class DynamicFormApp(tk.Tk):
+
     def show_warning_popup(self):
         """
         Show a custom Toplevel window with warnings and Proceed/Cancel buttons.
@@ -245,10 +267,17 @@ class DynamicFormApp(tk.Tk):
         return result['proceed']
 
     def __init__(self):
+
         super().__init__()
         self.title("Myelodose Beta")
         self.geometry("900x900")
         self.current_daughters = []  # Store daughters for selected nuclide
+        
+        # Warning label for ICRP CF button presses
+        self.icrp_cf_warning_var = tk.StringVar(value="")
+        self.icrp_cf_warning_label = tk.Label(self, textvariable=self.icrp_cf_warning_var, fg="orange", font=("TkDefaultFont", 10, "bold"))
+        self.icrp_cf_warning_label.pack(pady=5)
+
         self.checkbox_window = None  # Ensure checkbox_window is always defined
 
         self.warnings = []  # Store warnings
@@ -282,7 +311,7 @@ class DynamicFormApp(tk.Tk):
         self.combo.bind("<<ComboboxSelected>>", self.on_nuclide_selected)
         self.combo.pack(fill="x", padx=5, pady=5)
 
-        # Example: Tooltip for radionuclide combobox, static text
+        # Example of a tooltip: Tooltip for radionuclide combobox, static text
         ToolTip(self.combo, "Select a radionuclide. Choices affect available fields.")
 
         # Radio buttons
@@ -372,12 +401,20 @@ class DynamicFormApp(tk.Tk):
 
         # Input unit selection (radio buttons) will be placed inside the form area
         self.input_unit = tk.StringVar(value="MBqhrs_per_ml")  # Default unit
+        
+        def update_input_label(*args):
+            print("Input unit changed to:", self.input_unit.get())
+            self.input_label_super.config(text=self.get_input_label_text())
+        
+        # Create the form using the super-list
+        self.form_super, self.widgets_super, self.input_label_super = self.create_form(len(SUPER_SITES), SUPER_SITES)
+        self.form_super.pack(in_=self.form_container, fill="both", expand=True)
+        # Add trace function 
+        self.input_unit.trace_add('write', update_input_label)
 
-        # Create both forms (radio buttons will be inside)
-        self.form_13, self.widgets_13, self.input_label_13 = self.create_form(13, ELECTRON_SITES)
-        self.form_7, self.widgets_7, self.input_label_7 = self.create_form(7, ALPHA_SITES)
-
-        self.active_widgets = self.widgets_13
+        # Map field names to widgets for easy access
+        self.field_name_to_widget = {w['name']: w for w in self.widgets_super}
+        self.active_widgets = self.widgets_super  # Default: all widgets
 
         # Buttons (create only once)
         btn_frame = tk.Frame(self)
@@ -394,17 +431,22 @@ class DynamicFormApp(tk.Tk):
         # Add Results button for demonstration
         tk.Button(btn_frame, text="Show Results Window",
             command=self.show_results_window).pack(side="left", padx=5)
+        
 
     def clear_all_inputs(self):
         # Clear alpha RBE entry
         self.alpha_RBE_var.set("")
         # Reset radio buttons
         self.radio_choice.set("RM")
-        # Clear all form entries and combos
-        for widgets in [self.widgets_13, self.widgets_7]:
-            for w in widgets:
-                w['entry'].delete(0, 'end')
-                w['combo'].set("")
+        # Clear all form entries and combos (all fields)
+        for w in self.widgets_super:
+            w['entry'].delete(0, 'end')
+            # Only set combo if not disabled
+            try:
+                if str(w['combo'].cget('state')) != 'disabled':
+                    w['combo'].set("")
+            except Exception:
+                pass
 
     def show_results_window(self):
         # Show warning popup before proceeding
@@ -447,8 +489,8 @@ class DynamicFormApp(tk.Tk):
         unit_frame = tk.Frame(frame)
         unit_frame.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 2))
         tk.Label(unit_frame, text="Input unit:").pack(side="left", padx=(0, 5))
-        tk.Radiobutton(unit_frame, text="Total Activity (total_act)", variable=self.input_unit, value="MBqhrs").pack(side="left")
-        tk.Radiobutton(unit_frame, text="Concentration (conc_act)", variable=self.input_unit, value="MBqhrs_per_ml").pack(side="left")
+        tk.Radiobutton(unit_frame, text="Total Activity (total_act)", variable=self.input_unit, value=InputUnit.TOTAL_ACTIVITY).pack(side="left")
+        tk.Radiobutton(unit_frame, text="Concentration (conc_act)", variable=self.input_unit, value=InputUnit.CONCENTRATION).pack(side="left")
 
         # Add headers above input and combo columns, update label based on unit
         input_label = tk.Label(frame, text=self.get_input_label_text(), font=("TkDefaultFont", 10, "bold"))
@@ -470,11 +512,36 @@ class DynamicFormApp(tk.Tk):
             combo = ttk.Combobox(frame, values=dropdown_vals, width=6)
             combo.grid(row=row, column=2, sticky="ew", padx=5)
 
+            def btn_command(c=combo, n=label_text, w_ref=None):
+                # Only apply if button is enabled
+                if w_ref is not None and str(w_ref['btn'].cget('state')) == 'disabled':
+                    return
+                # If this is a 7-input field, use CF_DEFAULTS_7
+                if n in CF_DEFAULTS_7:
+                    cf_val = CF_DEFAULTS_7[n]
+                    # Add value to combobox if not present
+                    values = list(c['values'])
+                    if cf_val not in values:
+                        values.append(cf_val)
+                        c['values'] = values
+                    # Only set if not disabled
+                    if str(c.cget('state')) != 'disabled':
+                        c.set(cf_val)
+                        # Show warning only for subset
+                        if n in CF_WARNING_FIELDS:
+                            self.icrp_cf_warning_var.set(f"Warning: {n} using approximate ICRP-value.")
+                        else:
+                            self.icrp_cf_warning_var.set("")
+                else:
+                    self.apply_default_combo(c, n)
+                    self.icrp_cf_warning_var.set("")
+            # Create widget dict first so we can pass reference to btn_command
+            widget_dict = {'name': label_text, 'entry': entry, 'combo': combo, 'btn': None}
             btn = tk.Button(frame, text="Use ICRP CF",
-                            command=lambda c=combo, n=label_text: self.apply_default_combo(c, n))
+                            command=lambda c=combo, n=label_text, w_ref=widget_dict: btn_command(c, n, w_ref))
             btn.grid(row=row, column=3, padx=5)
-
-            widgets.append({'name': label_text, 'entry': entry, 'combo': combo, 'btn': btn})
+            widget_dict['btn'] = btn
+            widgets.append(widget_dict)
 
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=1)
@@ -482,10 +549,11 @@ class DynamicFormApp(tk.Tk):
 
     def get_input_label_text(self):
         unit = self.input_unit.get()
-        if unit == "total_act":
-            return "MBq*hrs (total activity)"
-        else:
-            return "MBq*hrs/ml (concentration)"
+        
+        return {
+            InputUnit.TOTAL_ACTIVITY: "MBq*hrs (total activity)",
+            InputUnit.CONCENTRATION: "MBq*hrs/ml (concentration)"
+        }[self.input_unit.get()]
 
     # --- dynamic form switching -------------------------------------------
 
@@ -496,29 +564,45 @@ class DynamicFormApp(tk.Tk):
 
     def update_form(self, event=None):
         val = self.combo.get()
+        enabled_fields = []
         if val in SEVEN_FIELD_VALUES:
-            self.active_widgets = self.widgets_7
-            self.show_form(self.form_7)
-            # Hide ICRP CF buttons for 7-field nuclides
-            for w in self.widgets_7:
-                w['btn'].grid_remove()
+            # Enable only the 7 relevant fields, disable the rest (including button)
+            for w in self.widgets_super:
+                if w['name'] in ALPHA_SITES:
+                    w['entry'].config(state="normal")
+                    w['combo'].config(state="readonly")
+                    w['btn'].config(state="normal")
+                    enabled_fields.append(w)
+                else:
+                    w['entry'].config(state="disabled")
+                    w['combo'].config(state="disabled")
+                    w['btn'].config(state="disabled")
         else:
-            self.active_widgets = self.widgets_13
-
-            # Update both input labels when unit changes
-            def update_input_labels(*args):
-                self.input_label_13.config(text=self.get_input_label_text())
-                self.input_label_7.config(text=self.get_input_label_text())
-            self.input_unit.trace_add('write', update_input_labels)
-            self.show_form(self.form_13)
-            # Show ICRP CF buttons for 13-field nuclides
-            for w in self.widgets_13:
-                w['btn'].grid()
+            # Enable only the 13-field (ELECTRON_SITES) fields, disable the rest (including button)
+            for w in self.widgets_super:
+                if w['name'] in ELECTRON_SITES:
+                    w['entry'].config(state="normal")
+                    w['combo'].config(state="readonly")
+                    w['btn'].config(state="normal")
+                    enabled_fields.append(w)
+                else:
+                    w['entry'].config(state="disabled")
+                    w['combo'].config(state="disabled")
+                    w['btn'].config(state="disabled")
+        # Update active_widgets to only enabled widgets
+        self.active_widgets = enabled_fields
+        # Update input label DEBUG
+        #self.input_label_super.config(text=self.get_input_label_text())
 
     # --- defaults ----------------------------------------------------------
 
     def get_default_dict(self):
-        return DEFAULT_VALUES_7 if self.active_widgets is self.widgets_7 else DEFAULT_VALUES_13
+        # Use 7 or 13 defaults depending on which fields are enabled
+        enabled_names = {w['name'] for w in self.active_widgets}
+        if enabled_names == set(ALPHA_SITES):
+            return DEFAULT_VALUES_7
+        else:
+            return DEFAULT_VALUES_13
 
     def apply_default(self, entry, row):
         # Deprecated: No longer used for entry fields
@@ -533,7 +617,12 @@ class DynamicFormApp(tk.Tk):
         defaults = self.get_default_dict()
         for w in self.active_widgets:
             value = defaults.get(w['name'], "")
-            w['combo'].set(value)
+            # Only set combo if not disabled
+            try:
+                if str(w['combo'].cget('state')) != 'disabled':
+                    w['combo'].set(value)
+            except Exception:
+                pass
 
     # --- checkbox window ---------------------------------------------------
 
@@ -601,7 +690,6 @@ class DynamicFormApp(tk.Tk):
 
         # Check if there are reasons for warning
         
-        # DEBUG
 
         inputs = self.collect_all_values()
         inputs = post_process_back_end_inputs(inputs)
@@ -629,8 +717,6 @@ class DynamicFormApp(tk.Tk):
         return calc_result
 
 # --- Window for displaying the results --------------------------------------------
-
-
 
 class ResultsWindow(tk.Toplevel):
     def __init__(self, parent, rows, results):
