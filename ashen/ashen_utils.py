@@ -17,9 +17,14 @@ import sys
 import re
 from collections import defaultdict
 from pathlib import Path
+import importlib.resources
 
-DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
-ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
+#DECAY_CHAINS_PATH = Path(__file__).parent.parent / "resources/DECAY_CHAINS.TXT"
+#ICRP_107_PATH = Path(__file__).parent.parent / "resources/FULL_RAD_LIST.RAD"
+#
+#with importlib.resources.open_text("ashen.resources", "DECAY_CHAINS.TXT") as f:
+#    DECAY_CHAINS_CONTENT = f.read()
+
 
 @dataclass
 class RadiationEmission:
@@ -245,11 +250,11 @@ def get_daughters(db: DecayDatabase, nuclide_name: str, parent_fraction=1.0, dau
 
     return daughters
 
-def half_life_from_icrp107(path=ICRP_107_PATH):
+def half_life_from_icrp107(path=None):
 
     halflife_data = {}
 
-    with open(path, 'r') as file:
+    with importlib.resources.open_text("ashen.resources", "FULL_RAD_LIST.RAD") as file:
         for line in file:
             line = ' '.join(line.split())
             split_line = line.split(" ")
@@ -261,12 +266,12 @@ def half_life_from_icrp107(path=ICRP_107_PATH):
 
     return halflife_data
 
-def make_decay_chain_db(path=DECAY_CHAINS_PATH, emission_data=None, add_single_nuclides=True):
+def make_decay_chain_db(path=None, emission_data=None, add_single_nuclides=True):
 
     # Retreive the decay chains - potentially finniky
 
-    with open(path, 'r') as file:
-        lines = file.readlines()
+    with importlib.resources.open_text("ashen.resources", "DECAY_CHAINS.TXT") as f:
+        lines = f.readlines()
 
     # Find the indexes of the lines that contain "Daughter Products"
 
@@ -366,7 +371,7 @@ def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
 
     return energy_dict
 
-def load_icrp_107(path=ICRP_107_PATH):
+def load_icrp_107(path=None):
 
     energy_data = defaultdict(list)
     current_nuclide = None
@@ -379,8 +384,8 @@ def load_icrp_107(path=ICRP_107_PATH):
     radiation_type_pattern = r'\b(?:' + \
         '|'.join(valid_radiation_types) + r')\b'
 
-    with open(path, 'r') as file:
-        for line in file:
+    with importlib.resources.open_text("ashen.resources", "FULL_RAD_LIST.RAD") as f:
+        for line in f:
             # Match a nuclide entry (e.g., "Ac-223        2.10m")
             # nuclide_match = re.match(r"^([A-Za-z\-0-9]+)\s+([\d\.]+[mhd])", line)
             nuclide_match = None
