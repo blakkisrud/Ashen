@@ -47,8 +47,8 @@ def compute_yields(df):
     E = df['E(MeV)'].values
     P = df['P(E)'].values.astype(float)
     # trapezoidal integration for P dE and E*P dE
-    A = np.trapz(P, E)                 # total area under P(E)
-    Eweighted = np.trapz(E*P, E)      # ∫ E*P(E) dE
+    A = np.trapezoid (P, E)                 # total area under P(E)
+    Eweighted = np.trapezoid (E*P, E)      # ∫ E*P(E) dE
     meanE = Eweighted / A if A>0 else np.nan
 
     # build bin list: centre energy, fractional yield per bin
@@ -92,7 +92,7 @@ def replace_simple_beta_with_full_spectrum(nuclide: Nuclide) -> Nuclide:
 if __name__ == "__main__":
 
     # Load the beta spectrum data
-    beta_spectrum_data = extract_data(path_to_beta_files, 'Lu-177')
+    beta_spectrum_data = extract_data(PATH_TO_BETA_FILES, 'Lu-177')
 
     df_spectrum = pd.DataFrame(beta_spectrum_data, columns=['E(MeV)', 'P(E)'])
     results = compute_yields(df_spectrum)
