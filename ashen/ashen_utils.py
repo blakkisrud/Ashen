@@ -43,12 +43,20 @@ class Nuclide:
         default_factory=list)  # (Daughter name, branching fraction)
     emissions: List[RadiationEmission] = field(default_factory=list)
 
-    def calculate_alpha_energy(self) -> float:
+    is_alpha: bool = None
+    is_electron_emitter = None
+    is_neutron_emitter = None
+    is_fission_emitter = None
+    is_beta_emitter = None
+
+    def calculate_alpha_energy(self, rbe_alpha = 1.0) -> float:
         """Calculate the total alpha energy for the decay of this radionuclide."""
         total_alpha_energy = 0.0
         for emission in self.emissions:
             if emission.radiation_type == "A":
                 total_alpha_energy += emission.energy * emission.yield_fraction
+        # Apply RBE factor for alpha parparticles
+        total_alpha_energy *= rbe_alpha
         return total_alpha_energy
 
     def calculate_beta_energy(self) -> float:
@@ -92,9 +100,9 @@ class Nuclide:
                     total_low_energy_photons += emission.energy * emission.yield_fraction
         return total_low_energy_photons
 
-    def calculate_total_non_penetrative_energy(self, cut_off=1e-3) -> float:
+    def calculate_total_non_penetrative_energy(self, cut_off=1e-3, rbe_alpha = 1.0) -> float:
         """Calculate the total non-penetrative energy for the decay of this radionuclide."""
-        return (self.calculate_alpha_energy() + self.calculate_ic_electrons() +
+        return (self.calculate_alpha_energy(rbe_alpha=rbe_alpha) + self.calculate_ic_electrons() +
                 self.calculate_auger_electrons() + self.calculate_low_energy_photons(cut_off) + self.calculate_beta_energy())
     
     def calculate_decay_constant(self) -> float:
@@ -128,6 +136,36 @@ class DecayDatabase:
         for daughter, fraction in nuclide.daughters:
             print(f"{indent}  ├── {daughter} (Branching: {fraction:.3e})")
             self.display_decay_chain(daughter, level + 1)
+
+    def get_all_nuclide_names(self):
+        """Returns a list of all nuclide names in the database."""
+        return list(self.nuclides.keys())
+
+    def get_half_lives_of_daughters(self, nuclide_name: str) -> Dict[str, str]:
+        """Returns a dictionary of daughter nuclides and their half-lives for a given nuclide."""
+        nuclide = self.get_decay_info(nuclide_name)
+        if not nuclide:
+            return {}
+
+        daughter_half_lives = {}
+
+        # Recursively get daughters
+
+        def _get_daughters_recursive(nuc_name):
+            nuc = self.get_decay_info(nuc_name)
+            if not nuc:
+                return
+            for daughter, _ in nuc.daughters:
+                daughter_nuc = self.get_decay_info(daughter)
+                if daughter_nuc:
+                    daughter_half_lives[daughter] = daughter_nuc.halflife
+                    _get_daughters_recursive(daughter)
+
+        _get_daughters_recursive(nuclide_name)
+
+        return daughter_half_lives
+
+    
 
 
 def convert_to_hours(num, unit):
@@ -331,9 +369,56 @@ def make_decay_chain_db(path=None, emission_data=None, add_single_nuclides=True)
             ]
             db.add_nuclide(nuclide)
 
+        # Add a flag for alpha emitters
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type == "A":
+                nuc.is_alpha = True
+                break
+        else:
+            nuc.is_alpha = False
+
+    # Add a flag for electron emitters
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type in ["B-", "IE", "AE"]:
+                nuc.is_electron_emitter = True
+                break
+        else:
+            nuc.is_electron_emitter = False
+
+    # Add a flag for beta emitters
+
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type == "B-":
+                nuc.is_beta_emitter = True
+                break
+        else:
+            nuc.is_beta_emitter = False
+
+    # Add a flag for neutron emitters
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type == "N":
+                nuc.is_neutron_emitter = True
+                break
+        else:
+            nuc.is_neutron_emitter = False
+
+    # Add a flag for fission emitters
+
+    for nuc_name, nuc in db.nuclides.items():
+        for em in nuc.emissions:
+            if em.radiation_type == "FF":
+                nuc.is_fission_emitter = True
+                break
+        else:
+            nuc.is_fission_emitter = False
+
     return db
 
-def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
+def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0, rbe_alpha=1.0):
 
     total_alpha_energy = 0
     total_beta_energy = 0
@@ -346,7 +431,7 @@ def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
                 "Total Non-Penetrative Energy": 0}
 
     total_alpha_energy += db.get_decay_info(
-        nuc_name).calculate_alpha_energy() * parent_fraction
+        nuc_name).calculate_alpha_energy(rbe_alpha = rbe_alpha) * parent_fraction
     total_beta_energy += db.get_decay_info(
         nuc_name).calculate_beta_energy() * parent_fraction
     total_non_penetrative_energy += db.get_decay_info(
@@ -359,11 +444,11 @@ def energy_in_decay_chain(db, nuc_name, parent_fraction=1.0):
             continue
 
         total_alpha_energy += db.get_decay_info(
-            daughter_name).calculate_alpha_energy() * fraction
+            daughter_name).calculate_alpha_energy(rbe_alpha = rbe_alpha) * fraction
         total_beta_energy += db.get_decay_info(
             daughter_name).calculate_beta_energy() * fraction
         total_non_penetrative_energy += db.get_decay_info(
-            daughter_name).calculate_total_non_penetrative_energy() * fraction
+            daughter_name).calculate_total_non_penetrative_energy(rbe_alpha = rbe_alpha) * fraction
 
     energy_dict = {"Total Alpha Energy": total_alpha_energy,
                    "Total Beta Energy": total_beta_energy,
@@ -377,7 +462,7 @@ def load_icrp_107(path=None):
     current_nuclide = None
 
     # List of possible radiation types to match
-    valid_radiation_types = ['X', 'A', 'G', 'IE', 'AE', 'AR']
+    valid_radiation_types = ['X', 'A', 'G', 'IE', 'AE', 'AR', "B-"]
 
     # Create a regex pattern that matches the valid radiation types
     # radiation_type_pattern = '|'.join(valid_radiation_types)  # e.g., "X|A|G|IE|AE|AR"
