@@ -10,7 +10,7 @@ setup(
     #include_package_data=True,
     #package_data={"ashen": ["resources/FULL_RAD_LIST.RAD"]},
     package_data={
-        "ashen": ["resources/*.TXT", "resources/*.RAD"],
+        "ashen": ["resources/*.TXT", "resources/*.RAD", "resources/*.BET"],
     },
     entry_points={
         "console_scripts": [
